@@ -34,8 +34,8 @@ class SimulationParameters:
 
 @dataclass
 class DatasetParameters:
-    d_val_m: np.ndarray = np.arange(20, 101, 5) * 1.0e-9
-    tau: np.ndarray = np.linspace(6.0*3600, 24.0*3600, 10)
+    d_val_m: np.ndarray = np.arange(20, 101, 1) * 1.0e-9
+    tau: np.ndarray = np.linspace(6.0*3600, 24.0*3600, 19)
     save: bool = True
     filepath: str = "data/"
     filename: str = "simulation_dataset.npz"
@@ -50,13 +50,15 @@ class MLParameters:
     val_tau: np.ndarray = np.array([36000, 86400.])
     test_d: np.ndarray = np.array([35, 45, 55, 65]) * 1.0e-9
     test_tau: np.ndarray = np.array([72000.])
-    train_d: np.ndarray = np.setdiff1d(np.arange(20, 101, 5) * 1.0e-9, np.concatenate((val_d, test_d)))
-    train_tau: np.ndarray = np.setdiff1d(np.linspace(6.0*3600, 24.0*3600, 10), np.concatenate((val_tau, test_tau)))
+    train_d: np.ndarray = np.setdiff1d(np.arange(20, 101, 1) * 1.0e-9, np.concatenate((val_d, test_d)))
+    train_tau: np.ndarray = np.setdiff1d(np.linspace(6.0*3600, 24.0*3600, 19), np.concatenate((val_tau, test_tau)))
     CI_scale: float = 1e-8
+    n_unif: int = 150
+    n_strat: int = 150
 
     # ML Surrogate creation
     input_dim: int = 4
-    hidden: int = 128
+    hidden: int = 64
     n_hidden: int = 3
 
     # Surrogate Training
@@ -64,6 +66,11 @@ class MLParameters:
     LR_MIN: int = 1e-5
     N_EPOCHS: int = 150
     BATCH_SIZE: int = 2048
-
+    save_path: str = "/u/mgalexan/NPSurr/data/surrogate_model.pt"
 
     DEVICE: str = "cuda" if t.cuda.is_available() else "cpu"
+
+
+@dataclass
+class InversionParameters:
+    None

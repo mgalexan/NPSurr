@@ -13,18 +13,18 @@ def log_transform(data, scale: float):
     Log-transform the data with a given scale.
     """
     if isinstance(data, np.ndarray):
-        return np.log(np.clip(data, 1e-30, None) / scale)
+        return np.log1p(np.clip(data, 0.0, None) / scale)
     elif isinstance(data, t.Tensor):
-        return t.log(t.clip(data, 1e-30, None) / scale)
+        return t.log1p(t.clip(data, 0.0, None) / scale)
 
 def inverse_log_transform(data, scale: float):
     """
     Inverse log-transform the data with a given scale.
     """
     if isinstance(data, np.ndarray):
-        return np.exp(data) * scale
+        return np.expm1(data) * scale
     elif isinstance(data, t.Tensor):
-        return t.log(t.clip(data, 1e-30, None) / scale)
+        return t.expm1(data) * scale
 
 def normalize(data, mean: float, std: float):
     """
@@ -38,9 +38,50 @@ def inverse_normalize(data, mean: float, std: float):
     """
     return data * std + mean
 
+def stratified_sample_with_weights(CI_grid, n_unif, n_strat, rng):
+    """
+    Stratified sampling with logarithmic weighting based on CI values.
+    """
+    Nt, Nr = CI_grid.shape
+    N_grid = Nt * Nr
+    
+    t_grid = np.arange(Nt)
+    r_grid = np.arange(Nr)
+    T_g, R_g = np.meshgrid(t_grid, r_grid, indexing='ij')
+    
+    t_flat = T_g.ravel()
+    r_flat = R_g.ravel()
+    ci_flat = CI_grid.ravel()
+    
+    idx_unif = rng.choice(N_grid, size=min(n_unif, N_grid), replace=False)
+    
+    ci64 = ci_flat.astype(np.float64)
+    ci_max = ci64.max()
+    
+    if ci_max > 0.0:
+        raw_w = np.log1p(np.clip(ci64, 0.0, None) / ci_max)
+    else:
+        raw_w = np.ones(N_grid, dtype=np.float64)
+    
+    w_sum = raw_w.sum()
+    if w_sum <= 0.0:
+        weights = np.ones(N_grid, dtype=np.float64) / N_grid
+    else:
+        weights = raw_w / w_sum
+        weights = np.clip(weights, 0.0, None)
+        weights /= weights.sum()
+    
+    idx_strat = rng.choice(N_grid, size=min(n_strat, N_grid), replace=False, p=weights)
+    
+    indices = np.unique(np.concatenate([idx_unif, idx_strat]))
+    
+    return indices, r_flat[indices], t_flat[indices]
+
 class SimulationDataset(Dataset):
     """
-    PyTorch Dataset for the simulation data.
+    PyTorch Dataset for the simulation data with intelligent stratified sampling.
+    
+    Uses logarithmic weighting to oversample high-concentration regions.
     """
     def __init__(self, params: MLParameters, data: dict):
         self.data = data
@@ -55,37 +96,73 @@ class SimulationDataset(Dataset):
 
         self.params = params
 
-        self.d_mean = np.mean(self.d_val_m); self.d_std = np.std(self.d_val_m) if len(self.d_val_m) > 1 else 1
-        self.tau_mean = np.mean(self.tau); self.tau_std = np.std(self.tau) if len(self.tau) > 1 else 1
-        self.r_mean = np.mean(self.r); self.r_std = np.std(self.r)
-        self.t_out_mean = np.mean(self.t_out); self.t_out_std = np.std(self.t_out)
-        self.CI_mean = np.mean(self.C_I_log); self.CI_std = np.std(self.C_I_log)
+        self.d_mean = np.mean(self.d_val_m)
+        self.d_std = np.std(self.d_val_m) if len(self.d_val_m) > 1 else 1.0
+        self.tau_mean = np.mean(self.tau)
+        self.tau_std = np.std(self.tau) if len(self.tau) > 1 else 1.0
+        self.r_mean = np.mean(self.r)
+        self.r_std = np.std(self.r) + 1e-30
+        self.t_out_mean = np.mean(self.t_out)
+        self.t_out_std = np.std(self.t_out) + 1e-30
+        self.CI_mean = np.mean(self.C_I_log)
+        self.CI_std = np.std(self.C_I_log) + 1e-30
 
         self.norm = {
             "d": [self.d_mean, self.d_std],
-            "tau" : [self.tau_mean, self.tau_std],
-            "t" : [self.t_out_mean, self.t_out_std],
-            "r" : [self.r_mean, self.r_std],
-            "CI" : [self.CI_mean, self.CI_std]
-                     }
+            "tau": [self.tau_mean, self.tau_std],
+            "t": [self.t_out_mean, self.t_out_std],
+            "r": [self.r_mean, self.r_std],
+            "CI": [self.CI_mean, self.CI_std]
+        }
+        
+        self._generate_stratified_indices()
+    
+    def _generate_stratified_indices(self):
+        """
+        Generate stratified sampling indices for all (d, tau) pairs.
+        Stores per-parameter-pair indices for intelligent sampling.
+        """
+        self.indices_by_pair = {}
+        self.flat_indices = []
+        self.pair_mapping = {}  #
+        
+        rng = np.random.default_rng(42)
+        flat_idx = 0
+        
+        for d_idx in range(len(self.d_val_m)):
+            for tau_idx in range(len(self.tau)):
+                CI_grid = self.CI[d_idx, tau_idx, :, :]
+                
+                indices, _, _ = stratified_sample_with_weights(
+                    CI_grid, self.params.n_unif, self.params.n_strat, rng
+                )
+                
+                self.indices_by_pair[(d_idx, tau_idx)] = indices
+                
+                for grid_idx in indices:
+                    self.pair_mapping[flat_idx] = (d_idx, tau_idx, grid_idx)
+                    flat_idx += 1
+        
+        self.sampled_size = flat_idx
     
     def __len__(self):
-        return len(self.d_val_m) * len(self.tau) * len(self.r) * len(self.t_out)
+        return self.sampled_size
     
     def __getitem__(self, idx):
-        d_val_m_idx = idx // (len(self.tau) * len(self.r) * len(self.t_out))
-        tau_idx = (idx // (len(self.r) * len(self.t_out))) % len(self.tau)
-        t_out_idx = (idx // len(self.r)) % len(self.t_out)
-        r_idx = idx % len(self.r)
-
-        d_val_m = self.d_val_m[d_val_m_idx]
+        d_idx, tau_idx, grid_idx = self.pair_mapping[idx]
+        
+        # Decode grid index to (t_idx, r_idx)
+        Nr = len(self.r)
+        t_idx = grid_idx // Nr
+        r_idx = grid_idx % Nr
+        
+        d_val_m = self.d_val_m[d_idx]
         tau = self.tau[tau_idx]
         r = self.r[r_idx]
-        t_out = self.t_out[t_out_idx]
-        C_I_log = self.C_I_log[d_val_m_idx, tau_idx, t_out_idx, r_idx]
+        t_out = self.t_out[t_idx]
+        C_I_log = self.C_I_log[d_idx, tau_idx, t_idx, r_idx]
 
-        
-
+        # Normalize
         d_val_m_norm = normalize(d_val_m, self.d_mean, self.d_std)
         tau_norm = normalize(tau, self.tau_mean, self.tau_std)
         t_out_norm = normalize(t_out, self.t_out_mean, self.t_out_std)
@@ -95,13 +172,14 @@ class SimulationDataset(Dataset):
         X = t.stack([
             t.tensor(d_val_m_norm, dtype=t.float32), 
             t.tensor(tau_norm, dtype=t.float32),
-            t.tensor(r_norm, dtype=t.float32),
-            t.tensor(t_out_norm, dtype=t.float32)
-            ], dim=0)
+            t.tensor(t_out_norm, dtype=t.float32),
+            t.tensor(r_norm, dtype=t.float32)
+        ], dim=0)
         
         y = t.tensor(C_I_log_norm, dtype=t.float32).unsqueeze(0)
 
         return X, y
+
 
 def prepare_torch_datasets(params: MLParameters):
     """

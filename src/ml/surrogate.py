@@ -68,6 +68,9 @@ def train_surrogate(params: MLParameters):
     val_loader = DataLoader(val_data, params.BATCH_SIZE, shuffle=True, num_workers=0)
     test_loader = DataLoader(test_data, params.BATCH_SIZE, shuffle=True, num_workers=0)
 
+    model.load_norm(train_data)
+
+
     n_params = sum(p.numel() for p in model.parameters())
 
     opt = t.optim.Adam(model.parameters(), lr=params.LR_INIT, weight_decay=1e-5)
@@ -91,7 +94,7 @@ def train_surrogate(params: MLParameters):
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
             running += loss.item() * len(xb)
-        trn_loss = running / len(test_data)
+        trn_loss = running / len(train_data)
         sch.step()
 
         model.eval()
@@ -100,7 +103,7 @@ def train_surrogate(params: MLParameters):
             for xb, yb in val_loader:
                 xb, yb = xb.to(params.DEVICE), yb.to(params.DEVICE)
                 v_run += crit(model(xb), yb).item() * len(xb)
-        val_loss = v_run / len(test_data)
+        val_loss = v_run / len(val_data)
         trn_hist.append(trn_loss)
         val_hist.append(val_loss)
 
@@ -114,6 +117,7 @@ def train_surrogate(params: MLParameters):
 
     model.load_state_dict(best_state)
     print(f"\nBest val MSE = {best_val:.4e}  ({time.time()-t0_tr:.0f}s total)")
+    t.save(model, params.save_path)
 
 
 if __name__ == "__main__":
