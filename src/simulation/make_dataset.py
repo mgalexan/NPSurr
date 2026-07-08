@@ -1,6 +1,7 @@
 import numpy as np
 from tqdm import tqdm
 from copy import copy
+import os
 
 from simulation.simulator import *
 from constants import DatasetParameters, PhysicsConstants, SimulationParameters
@@ -49,7 +50,8 @@ def make_dataset(constants: PhysicsConstants, params: SimulationParameters, data
     CI_vals = np.array(CI_vals).reshape(len(d_vals), len(tau_vals), len(t_out_vals), len(r_vals))
 
     if dataset_params.save:
-        filename = dataset_params.filepath + dataset_params.filename
+        filename = dataset_params.filepath + "/" + dataset_params.filename
+        os.makedirs(dataset_params.filepath, exist_ok=True)
         np.savez(filename, r=r_vals, t_out=t_out_vals, CN=CN_vals, CF=CF_vals, CI=CI_vals, d_val_m=d_vals, tau=tau_vals)
     else:      
         return { "r": r_vals, "t_out": t_out_vals, "CN": CN_vals, "CF": CF_vals, "CI": CI_vals, "d_val_m": d_vals, "tau": tau_vals}
