@@ -14,7 +14,7 @@ def add_noise(data: np.ndarray, noise_level: float):
     noise = rng.normal(0, sigma, size=data.shape)
     return data + noise
 
-def make_dataset(constants: PhysicsConstants, params: SimulationParameters, dataset_params: DatasetParameters):
+def make_dataset(constants: PhysicsConstants, params: SimulationParameters, dataset_params: DatasetParameters, dim: bool = True):
     '''
     Generate simulations on a grid of parameters and save the results to a .npz file.
     '''
@@ -24,8 +24,12 @@ def make_dataset(constants: PhysicsConstants, params: SimulationParameters, data
         for tau in dataset_params.tau:
             C.d_val_m = d_val_m
             C.tau = tau
-            DN = D_N_from_dim(C)
-            PN = P_N_from_dim(C)
+            if dim:
+                DN = D_N_from_dim(C)
+                PN = P_N_from_dim(C)
+            else:
+                DN = D_N_from_dimless(C)
+                PN = P_N_from_dimless(C)
             r, t_out, CN, CF, CI = forward_solver(PN, DN, C, params)
             if dataset_params.noise_level > 0.0:
                 CN = add_noise(CN, dataset_params.noise_level)

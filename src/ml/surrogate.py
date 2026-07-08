@@ -36,7 +36,7 @@ class Surrogate(nn.Module):
         self.norm = data.norm
 
     def forward(self, x):
-        if self.P["input_dim"] == 3: # Only estimating r
+        if self.P["input_dim"] == 3: # Only estimating d
             return self.net(x[:, [0,2,3]])
         else:
             return self.net(x)
@@ -118,8 +118,15 @@ def train_surrogate(params: MLParameters):
     model.load_state_dict(best_state)
     print(f"\nBest val MSE = {best_val:.4e}  ({time.time()-t0_tr:.0f}s total)")
     t.save(model, params.save_path)
+    return trn_hist, val_hist
 
 
 if __name__ == "__main__":
-    params = MLParameters()
+    params = MLParameters(
+        input_dim=3, 
+        val_tau = np.array([12 * 3600.]),
+        test_tau=  np.array([12 * 3600.]),
+        train_tau=  np.array([12 * 3600.]),
+        data_filepath="/u/mgalexan/NPSurr/data/one_dim_data.npy.npz"
+        )
     train_surrogate(params)

@@ -25,6 +25,10 @@ class PhysicsConstants:
     k_deg: float = 1.0e-6
     d_val_m: float = 40.0e-9
 
+    # Learned values
+    a_D : float = chi_D / (xi_ECM ** m_exp)
+    a_P : float = chi_P / (d_pore ** n_exp)
+
 @dataclass
 class SimulationParameters:
     R_T: float = 5.0e-3
@@ -73,4 +77,8 @@ class MLParameters:
 
 @dataclass
 class InversionParameters:
-    None
+    num_grid: int = 7
+    A_low: float = 1e-4
+    A_high: float = 1
+    G_low: float = 0.1
+    G_high: float = 100

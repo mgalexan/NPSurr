@@ -26,21 +26,21 @@ def P_N_from_dim(constants: PhysicsConstants):
     Pn = P["P0"] * np.exp(-P["chi_P"] * (P["d_val_m"] / P["d_pore"]) ** P["n_exp"])
     return Pn
 
-def D_N_from_dimless(a_D: float, constants: PhysicsConstants):
+def D_N_from_dimless(constants: PhysicsConstants):
     """
     Diffusion coefficient given by the learned parameter a_D.
     """
     P = vars(constants)
     D0 = P["k_B"] * P["T_K"] / (3.0 * np.pi * P["eta"] * P["d_val_m"])
-    Dn = D0 * np.exp(-a_D * P["d_val_m"] ** P["m_exp"])
+    Dn = D0 * np.exp(-P["a_D"] * P["d_val_m"] ** P["m_exp"])
     return Dn
 
-def P_N_from_dimless(a_P: float, constants: PhysicsConstants):
+def P_N_from_dimless(constants: PhysicsConstants):
     """
     Permeability given by the learned parameter a_P.
     """
     P = vars(constants)
-    Pn = P["P0"] * np.exp(-a_P * P["d_val_m"] ** P["n_exp"])
+    Pn = P["P0"] * np.exp(-P["a_P"] * P["d_val_m"] ** P["n_exp"])
     return Pn
 
 def forward_solver(Pn: float, Dn: float, constants: PhysicsConstants, params: SimulationParameters, verbose=False):
@@ -52,7 +52,7 @@ def forward_solver(Pn: float, Dn: float, constants: PhysicsConstants, params: Si
     r = np.linspace(0.0, R_T, P["Nr"])
     dr = r[1] - r[0]
     ratio = Pn / Dn
-    inv_r = np.where(r > 0, 1.0/r, 0.0)
+    inv_r = np.divide(1.0, r, out=np.zeros_like(r), where=r > 0)
 
     CN_g, CF_g = np.empty(P["Nr"]+2), np.empty(P["Nr"]+2)
 
