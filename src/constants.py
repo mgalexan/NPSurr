@@ -82,3 +82,9 @@ class InversionParameters:
     A_high: float = 1
     G_low: float = 0.1
     G_high: float = 100
+
+    d_low: float = 20e-9
+    d_high: float = 80e-9
+    tau_low: float = 6*3600.
+    tau_high: float = 24*3600.
+

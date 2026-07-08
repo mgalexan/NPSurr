@@ -1,12 +1,13 @@
 import torch as t
 import torch.nn as nn
 import torch.nn.functional as f
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
+from scipy.optimize import minimize
 import time
 from tqdm import tqdm
 
 from ml.data_torch import *
-from constants import MLParameters
+from constants import MLParameters, InversionParameters
 
 """
 Surrogate Model for the inverse problem
@@ -120,8 +121,50 @@ def train_surrogate(params: MLParameters):
     t.save(model, params.save_path)
     return trn_hist, val_hist
 
+def surrogate_inversion(data: dict, model: Surrogate, inv: InversionParameters, n_fit: int = 2):
+    """
+    Provide estimates of d and tau for a desired trajectory of CI
+    """
+    data_target = data["CI"].flatten()
+    t_grid, r_grid = np.meshgrid(data["t_out"], data["r"], indexing="ij")
+    fixed_coords = np.stack([t_grid.ravel(), r_grid.ravel()], axis=-1)
+
+    if n_fit == 2:
+        padded_coords = np.concat([np.ones_like(fixed_coords), fixed_coords], axis = 1)
+    elif n_fit == 1:
+        padded_coords = np.concat([np.ones((len(data_target), 1)), fixed_coords], axis = 1)
+
+    data_tensor = t.tensor(data_target, requires_grad=False).float().unsqueeze(1)
+    coord_tensor = t.tensor(padded_coords).float()
+    
+
+    def _loss(x):
+        coords = coord_tensor.clone().detach()
+        if n_fit == 2:
+            coords[:, 0] *= x[0]
+            coords[:, 1] *= x[1]
+        elif n_fit == 1:
+            coords[:, 0] *= x[0]
+        
+        res = model.forward_physical(coords)
+        err = f.mse_loss(res, data_tensor)
+        return np.log(err.item())
+
+    if n_fit == 2:   
+        bounds = [(inv.d_low, inv.d_high), (inv.tau_low, inv.tau_high)]
+        x_0 = np.array([(inv.d_low + inv.d_high) / 2, (inv.tau_low + inv.tau_high) / 2])
+    elif n_fit == 1:
+        bounds = [(inv.d_low, inv.d_high)]
+        x_0 = np.array([(inv.d_low + inv.d_high) / 2])
+    
+    res = minimize(_loss, x_0, bounds= bounds, method='Nelder-Mead')
+
+    return res
+
+
 
 if __name__ == "__main__":
+    '''
     params = MLParameters(
         input_dim=3, 
         val_tau = np.array([12 * 3600.]),
@@ -130,3 +173,15 @@ if __name__ == "__main__":
         data_filepath="/u/mgalexan/NPSurr/data/one_dim_data.npy.npz"
         )
     train_surrogate(params)
+    '''
+    #params = MLParameters()
+    #train_surrogate(params)
+    model = t.load("/u/mgalexan/NPSurr/data/surrogate_model.pt", weights_only= False)
+    data = np.load("/u/mgalexan/NPSurr/data/simulation_dataset.npz")
+    print(data["d_val_m"][15], data["tau"][15])
+    single_traj = {
+        "r" : data["r"],
+        "t_out" : data["t_out"],
+        "CI" : data["CI"][15,15]
+    }
+    print(surrogate_inversion(single_traj, model, InversionParameters()))
