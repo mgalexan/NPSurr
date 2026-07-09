@@ -5,6 +5,11 @@ from tqdm import tqdm
 from constants import PhysicsConstants, SimulationParameters, InversionParameters
 from simulation.simulator import *
 
+
+
+
+
+
 def pde_misfit(data: np.ndarray, t_obs_idx: np.ndarray, r_obs_idx: np.ndarray, D_N: float, P_N: float, params: SimulationParameters, phys: PhysicsConstants):
     """
     Compute the difference between a given dataset and the forward simulation of the PDE
@@ -92,6 +97,14 @@ class ProfileInversion:
                 "n_eval": result.nfev + self.inv.num_grid ** 2,
                 "result": result,
             }
+    
+    def loss_surface(self, obs: dict, A_grid, G_grid):
+        self._load_data(obs)
+        L_surf = np.empty((len(A_grid), len(G_grid)))
+        for i, A in enumerate(tqdm(A_grid)):
+            for j, G in enumerate(G_grid):
+                L_surf[i, j] = self._loss(np.log([A, G]))
+        return L_surf
 
 def estimate_laws(d_arr, A_est_arr, G_est_arr, phys: PhysicsConstants, params: SimulationParameters):
     """
