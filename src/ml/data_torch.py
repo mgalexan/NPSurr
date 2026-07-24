@@ -163,11 +163,11 @@ class SimulationDataset(Dataset):
         C_I_log = self.C_I_log[d_idx, tau_idx, t_idx, r_idx]
 
         # Normalize
-        d_val_m_norm = normalize(d_val_m, self.d_mean, self.d_std)
-        tau_norm = normalize(tau, self.tau_mean, self.tau_std)
-        t_out_norm = normalize(t_out, self.t_out_mean, self.t_out_std)
-        r_norm = normalize(r, self.r_mean, self.r_std)
-        C_I_log_norm = normalize(C_I_log, self.CI_mean, self.CI_std)
+        d_val_m_norm = normalize(d_val_m, self.norm["d"][0], self.norm["d"][1])
+        tau_norm = normalize(tau, self.norm["tau"][0], self.norm["tau"][1])
+        t_out_norm = normalize(t_out, self.norm["t"][0], self.norm["t"][1])
+        r_norm = normalize(r, self.norm["r"][0], self.norm["r"][1])
+        C_I_log_norm = normalize(C_I_log, self.norm["CI"][0], self.norm["CI"][1])
 
         X = t.stack([
             t.tensor(d_val_m_norm, dtype=t.float32), 

@@ -24,6 +24,7 @@ class PhysicsConstants:
     k_clr: float = 1.0e-5
     k_deg: float = 1.0e-6
     d_val_m: float = 40.0e-9
+    P_F: float = 1.27e-8
 
     # Learned values
     a_D : float = chi_D / (xi_ECM ** m_exp)
@@ -57,12 +58,12 @@ class MLParameters:
     train_d: np.ndarray = np.setdiff1d(np.arange(20, 101, 1) * 1.0e-9, np.concatenate((val_d, test_d)))
     train_tau: np.ndarray = np.setdiff1d(np.linspace(6.0*3600, 24.0*3600, 19), np.concatenate((val_tau, test_tau)))
     CI_scale: float = 1e-8
-    n_unif: int = 150
-    n_strat: int = 150
+    n_unif: int = 200
+    n_strat: int = 200
 
     # ML Surrogate creation
     input_dim: int = 4
-    hidden: int = 64
+    hidden: int = 128
     n_hidden: int = 3
 
     # Surrogate Training

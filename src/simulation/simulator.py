@@ -83,6 +83,41 @@ def forward_solver(Pn: float, Dn: float, constants: PhysicsConstants, params: Si
     CN, CF, CI = sol.y[:P["Nr"], :].T, sol.y[P["Nr"]:2*P["Nr"], :].T, sol.y[2*P["Nr"]:, :].T
     return r, t_out, CN, CF, CI
 
+def forward_solver_free(constants: PhysicsConstants, params: SimulationParameters, verbose=False):
+    """
+    Forward solver for the diffusion-reaction model with no nanoparticles.
+    """
+    P = {**vars(constants), **vars(params)}
+    R_T, t_f = P["R_T"], P["t_f"]
+    r = np.linspace(0.0, R_T, P["Nr"])
+    dr = r[1] - r[0]
+    inv_r = np.divide(1.0, r, out=np.zeros_like(r), where=r > 0)
+
+    CF_g = np.empty(P["Nr"]+2)
+    ratio = P["P_F"] / P["D_F"]
+
+    def Cp_np(t):
+        return P["C_P0"] * np.exp(-np.log(2.0) / P["tau"] * t)
+
+    def rhs(t, y):
+        CF, CI = y[:P["Nr"]], y[P["Nr"]:2*P["Nr"]]
+        Cp = Cp_np(t)
+        CF_g[0]=CF[1]; CF_g[1:-1]=CF; CF_g[-1]=CF[-2]+2*dr*ratio*(Cp - CF[-1])
+        d2CF=(CF_g[2:]-2*CF_g[1:-1]+CF_g[:-2])/dr**2
+        dCF_dr=(CF_g[2:]-CF_g[:-2])/(2*dr)
+        lap_CF=P["D_F"]*(d2CF+2*inv_r*dCF_dr); lap_CF[0]=3*P["D_F"]*d2CF[0]
+        dCF=lap_CF - (P["k_int"]+P["k_clr"])*CF
+        dCI=P["k_int"]*CF-P["k_deg"]*CI
+        return np.concatenate([dCF, dCI])
+
+    t_out = np.linspace(0., t_f, P["Nt_out"])
+    sol = solve_ivp(rhs, [0., t_f], np.zeros(2*P["Nr"]),
+                    method="RK45", t_eval=t_out, rtol=1e-6, atol=1e-10)
+    if not sol.success:
+        raise RuntimeError(f"Solver failed: {sol.message}")
+    CF, CI = sol.y[:P["Nr"], :].T, sol.y[P["Nr"]:2*P["Nr"], :].T
+    return r, t_out, CF, CI
+
 
 if __name__ == "__main__":
     constants = PhysicsConstants()
