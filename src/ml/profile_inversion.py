@@ -14,7 +14,8 @@ def pde_misfit(data: np.ndarray, t_obs_idx: np.ndarray, r_obs_idx: np.ndarray, D
     """
     Compute the difference between a given dataset and the forward simulation of the PDE
     """
-    r, t_out, CN, CF, CI = forward_solver(P_N, D_N, phys, params)
+    alpha = alpha_from_dim(phys)
+    r, t_out, CN, CF, CI = forward_solver(P_N, D_N, alpha, phys, params)
 
     CN = CN[np.ix_(t_obs_idx, r_obs_idx)]
 
@@ -137,11 +138,10 @@ if __name__ == "__main__":
     data = n.load("data/simulation_dataset.npz")
     d_vals = [data["d_val_m"][i] for i in range(0, 41, 10)]
     data_obs = [{"r": data["r"], "t_out": data["t_out"][::100], "CN": data["CN"][i,0][::100]} for i in range(0, 41, 10)]
-    phys = PhysicsConstants(tau=21600.0)
+    phys = PhysicsConstants(k_rel= data["k_rel"][0])
     params = SimulationParameters()
     inv = InversionParameters()
     inverter = ProfileInversion(phys, params, inv)
-
     A_list = []
     G_list = []
     for d_val, single_data in tqdm(zip(d_vals, data_obs)):

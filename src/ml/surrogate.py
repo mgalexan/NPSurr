@@ -2,7 +2,7 @@ import torch as t
 import torch.nn as nn
 import torch.nn.functional as f
 from torch.utils.data import DataLoader
-from scipy.optimize import minimize
+from scipy.optimize import minimize, differential_evolution
 import time
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -52,7 +52,7 @@ class Surrogate(nn.Module):
         """
         n = self.norm
         x[:, 0] = normalize(x[:,0], n["d"][0], n["d"][1])
-        x[:, 1] = normalize(x[:,1], n["tau"][0], n["tau"][1])
+        x[:, 1] = normalize(log_transform(x[:,1], self.P["k_rel_scale"]), n["k_rel"][0], n["k_rel"][1])
         x[:, 2] = normalize(x[:,2], n["t"][0], n["t"][1])
         x[:, 3] = normalize(x[:,3], n["r"][0], n["r"][1])
 
@@ -85,10 +85,10 @@ def train_surrogate(params: MLParameters):
 
     # Select a validation sample for animation tracking
     val_dataset_raw = val_data.dataset if hasattr(val_data, 'dataset') else val_data
-    # Pick the first (d, tau) pair for consistent animation
-    sample_d_idx, sample_tau_idx = 0, 0
+    # Pick the first (d, k_rel) pair for consistent animation
+    sample_d_idx, sample_k_rel_idx = 0, 0
     sample_d = val_dataset_raw.d_val_m[sample_d_idx]
-    sample_tau = val_dataset_raw.tau[sample_tau_idx]
+    sample_k_rel = val_dataset_raw.k_rel[sample_k_rel_idx]
     sample_r = val_dataset_raw.r
     sample_t = val_dataset_raw.t_out
     
@@ -100,12 +100,13 @@ def train_surrogate(params: MLParameters):
     from constants import PhysicsConstants, SimulationParameters
     phys_const = PhysicsConstants()
     phys_const.d_val_m = sample_d
-    phys_const.tau = sample_tau
+    phys_const.k_rel = sample_k_rel
     sim_params = SimulationParameters()
     sample_P_N = P_N_from_dim(phys_const)
     sample_D_N = D_N_from_dim(phys_const)
+    sample_alpha = alpha_from_dim(phys_const)
     r_true, t_true, CN_true, CF_true, CI_true = forward_solver(
-        sample_P_N, sample_D_N, phys_const, sim_params, verbose=False
+        sample_P_N, sample_D_N, sample_alpha, phys_const, sim_params, verbose=False
     )
     true_spatial_profile = CI_true[t_idx_12h, :]
     
@@ -147,8 +148,8 @@ def train_surrogate(params: MLParameters):
         with t.no_grad():
             t_r_grid = np.meshgrid(sample_t[t_idx_12h], sample_r, indexing="ij")
             coords_frame = np.stack([t_r_grid[0].ravel(), t_r_grid[1].ravel()], axis=-1)
-            d_tau_ones = np.ones((len(coords_frame), 2)) * np.array([sample_d, sample_tau])
-            full_coords = np.concatenate([d_tau_ones, coords_frame], axis=1)
+            d_k_rel_ones = np.ones((len(coords_frame), 2)) * np.array([sample_d, sample_k_rel])
+            full_coords = np.concatenate([d_k_rel_ones, coords_frame], axis=1)
             full_coords_tensor = t.tensor(full_coords).float().to(params.DEVICE)
             
             # Forward pass through network with physical normalization
@@ -164,13 +165,13 @@ def train_surrogate(params: MLParameters):
     t.save(model, params.save_path)
     
     # Create and save animation
-    _save_training_animation(animation_frames, sample_r, true_spatial_profile, sample_d, sample_tau, 
+    _save_training_animation(animation_frames, sample_r, true_spatial_profile, sample_d, sample_k_rel, 
                             sample_t[t_idx_12h], params.save_path.replace('.pt', '_training.mp4'))
     
     return trn_hist, val_hist
 
 
-def _save_training_animation(frames, r_vals, true_profile, d_val, tau_val, t_val, output_path):
+def _save_training_animation(frames, r_vals, true_profile, d_val, k_rel_val, t_val, output_path):
     """
     Save spatial concentration profiles across training epochs as an animation.
     
@@ -179,7 +180,7 @@ def _save_training_animation(frames, r_vals, true_profile, d_val, tau_val, t_val
     - r_vals: spatial grid points (meters)
     - true_profile: 1D array of true spatial profile at the fixed time
     - d_val: particle diameter (meters)
-    - tau_val: half-life (seconds)
+    - k_rel_val: release rate (herz)
     - t_val: time point (seconds)
     - output_path: path to save the mp4 animation
     """
@@ -200,7 +201,7 @@ def _save_training_animation(frames, r_vals, true_profile, d_val, tau_val, t_val
         ax.set_ylabel(r'Concentration $C_I$ (mol/m³)', fontsize=11)
         ax.set_ylim([vmin, vmax])
         ax.legend(loc='best', fontsize=10)
-        ax.set_title(f"Epoch {frame_idx+1}: Spatial profile at $t$=12h\n$d$={d_val*1e9:.0f}nm, $\\tau$={tau_val/3600:.1f}h", fontsize=12)
+        ax.set_title(f"Epoch {frame_idx+1}: Spatial profile at $t$=12h\n$d$={d_val*1e9:.0f}nm, $\\k_rel$={k_rel_val/3600:.1f}h", fontsize=12)
         ax.grid(alpha=0.3)
     
     anim = animation.FuncAnimation(fig, animate, frames=len(frames), interval=50, repeat=True)
@@ -210,7 +211,7 @@ def _save_training_animation(frames, r_vals, true_profile, d_val, tau_val, t_val
 
 class SurrogateInversion:
     """
-    Provide estimates of d and tau for a desired trajectory of CI
+    Provide estimates of d and k_rel for a desired trajectory of CI
     """
     def __init__(self, model: Surrogate, inv: InversionParameters, phys: PhysicsConstants, params: SimulationParameters, n_fit: int = 2, CI_thresh: float = 1e-4):
         self.model = model
@@ -242,7 +243,7 @@ class SurrogateInversion:
         coords = self.coord_tensor.clone().detach()
         if self.n_fit == 2:
             coords[:, 0] *= x[0]
-            coords[:, 1] *= x[1]
+            coords[:, 1] *= np.exp(x[1])
         elif self.n_fit == 1:
             coords[:, 0] *= x[0]
         with t.no_grad():
@@ -253,23 +254,23 @@ class SurrogateInversion:
             err = f.mse_loss(self._pred(x), self.data_tensor)
             return np.log(err.item())
 
-    def _fkc(self, x: np.ndarray): 
+    def _CI(self, x: np.ndarray): 
         res = t.sum(self._pred(x)[:,0] * self.coord_tensor[:, 3] ** 2)
         integral = res.detach().numpy() * self.dt * self.dr * 4 * np.pi ** 2
-        fkc = 1 - np.exp(-0.66 * integral)
-        return -np.log(fkc)
+        return -np.log(integral)
     
-    def _fkc_lim(self, x: np.ndarray):
-        fkc = self._fkc(x)
-        pred = self._pred(x).numpy()
-        count = np.where(pred > self.CI_thresh, np.ones_like(pred), np.zeros_like(pred)).sum()
-        return fkc + count
+    def _CI_center(self, x: np.ndarray): 
+            pred = self._pred(x)[:,0].detach().numpy()
+            rad = self.coord_tensor[:, 3].detach().numpy()
+            rad = np.where(rad < self.params.R_T * 0.5, rad, np.zeros_like(rad))   
+            integral = np.sum(pred * (rad ** 2)) * self.dt * self.dr * 4 * np.pi ** 2
+            return -np.log(integral)
 
-    def _clearance(self, x: np.ndarray):
+    def _uptake(self, x: np.ndarray):
         res = t.sum(self._pred(x)[:,0] * self.coord_tensor[:, 3] ** 2)
         integral_I = res.detach().numpy() * self.dt * self.dr * 4 * np.pi ** 2
 
-        tau = x[1]
+        tau = self.phys.tau
         integral_P = (self.phys.C_P0 * tau / np.log(2)) * (1 - np.exp(- np.log(2) * self.params.t_f / tau))
 
         return -np.log(integral_I / integral_P)
@@ -282,89 +283,78 @@ class SurrogateInversion:
         self._load_data(data)
         if loss_type == "mse":
             loss = self._loss
-        elif loss_type == "fkc":
-            loss = self._fkc
-        elif loss_type == "fkc_lim":
-            loss = self._fkc_lim
+        elif loss_type == "CI":
+            loss = self._CI
+        elif loss_type == "CI_center":
+            loss = self._CI_center
         elif loss_type == "clearance":
             loss = self._clearance
 
         if self.n_fit == 2:   
-            bounds = [(self.inv.d_low, self.inv.d_high), (self.inv.tau_low, self.inv.tau_high)]
-            x_0 = np.array([(self.inv.d_low + self.inv.d_high) / 2, (self.inv.tau_low + self.inv.tau_high) / 2])
+            bounds = [(self.inv.d_low, self.inv.d_high), (np.log(self.inv.k_rel_low), np.log(self.inv.k_rel_high))]
         elif self.n_fit == 1:
             bounds = [(self.inv.d_low, self.inv.d_high)]
-            x_0 = np.array([(self.inv.d_low + self.inv.d_high) / 2])
 
-        res = minimize(loss, x_0, bounds= bounds, method='Nelder-Mead')
-        
+        res = differential_evolution(loss, bounds= bounds)
+        opt_vals = res.x
+        opt_vals[1] = np.exp(opt_vals[1])
 
-        return res
+        return opt_vals
 
-    def loss_surface(self, obs: dict, d_grid, tau_grid, loss_type="mse"):
+    def loss_surface(self, obs: dict, d_grid, k_rel_grid, loss_type="mse"):
         self._load_data(obs)
-        L_surf = np.empty((len(d_grid), len(tau_grid)))
+        L_surf = np.empty((len(d_grid), len(k_rel_grid)))
         for i, d in enumerate(tqdm(d_grid)):
-            for j, tau in enumerate(tau_grid):
+            for j, k in enumerate(k_rel_grid):
+                k = np.log(k)
                 if loss_type == "mse":
-                    L_surf[i, j] = self._loss(np.array([d, tau]))
-                elif loss_type == "fkc":
-                    L_surf[i, j] = -self._fkc(np.array([d, tau]))
-                elif loss_type == "fkc_lim":
-                    L_surf[i, j] = -self._fkc_lim(np.array([d, tau]))
-                elif loss_type == "clearance":
-                    L_surf[i, j] = -self._clearance(np.array([d, tau]))
+                    L_surf[i, j] = self._loss(np.array([d, k]))
+                elif loss_type == "CI":
+                    L_surf[i, j] = -self._CI(np.array([d, k]))
+                elif loss_type == "CI_center":
+                                    L_surf[i, j] = -self._CI_center(np.array([d, k]))
+                elif loss_type == "uptake":
+                    L_surf[i, j] = -self._uptake(np.array([d, k]))
         return L_surf
     
-    def pde_misfit_surface(self, obs: dict, d_grid, tau_grid, loss_type="mse"):
+    def pde_misfit_surface(self, obs: dict, d_grid, k_rel_grid, loss_type="mse"):
         self._load_data(obs)
-        L_surf = np.empty((len(d_grid), len(tau_grid)))
+        L_surf = np.empty((len(d_grid), len(k_rel_grid)))
         for i, d in enumerate(tqdm(d_grid)):
-            for j, tau in enumerate(tau_grid):
-                self.phys.d_val_m = d; self.phys.tau = tau
-                P_N = P_N_from_dim(self.phys); D_N = D_N_from_dimless(self.phys)
-                r, _, _, _, CI = forward_solver(P_N, D_N, self.phys, self.params)
+            for j, k in enumerate(k_rel_grid):
+                self.phys.d_val_m = d; self.phys.k_rel = k
+                P_N = P_N_from_dim(self.phys); D_N = D_N_from_dimless(self.phys); alpha = alpha_from_dim(self.phys)
+                r, _, _, _, CI = forward_solver(P_N, D_N, alpha, self.phys, self.params)
                 if loss_type == "mse":
                     loss = np.mean((CI - obs["CI"]) ** 2)
-                elif loss_type == "fkc": 
-                    res = np.sum(CI * r ** 2)
+                elif loss_type == "CI": 
+                    res = np.sum(CI * (r) ** 2)
                     integral = res * self.dt * self.dr * 4 * np.pi**2
-                    loss = 1 - np.exp(-0.66 * integral)
-                elif loss_type == "fkc_lim": 
-                    res = np.sum(CI * r ** 2)
+                    loss = integral
+                elif loss_type == "CI_center":
+                    rad = np.where(r < self.params.R_T * 0.5, r, np.zeros_like(r))
+                    res = np.sum(CI * (rad ** 2))
                     integral = res * self.dt * self.dr * 4 * np.pi**2
-                    fkc = 1 - np.exp(-0.66 * integral)
-                    pen = np.where(CI > self.CI_thresh, np.ones_like(CI), np.zeros_like(CI)).sum()
-                    loss = fkc / np.exp(pen)
-                elif loss_type == "clearance":
+                    loss = integral
+                elif loss_type == "uptake":
                     res = np.sum(CI * r ** 2)
                     integral_I = res * self.dt * self.dr * 4 * np.pi**2
-                    integral_P = (self.phys.C_P0 * tau / np.log(2)) * (1 - np.exp(- np.log(2) * self.params.t_f / tau))
+                    integral_P = (self.phys.C_P0 * self.phys.tau / np.log(2)) * (1 - np.exp(- np.log(2) * self.params.t_f / self.phys.tau))
                     loss = integral_I / integral_P
                 L_surf[i, j] = loss
         return L_surf
 
 
 if __name__ == "__main__":
-    '''
-    params = MLParameters(
-        input_dim=3, 
-        val_tau = np.array([12 * 3600.]),
-        test_tau=  np.array([12 * 3600.]),
-        train_tau=  np.array([12 * 3600.]),
-        data_filepath="/u/mgalexan/NPSurr/data/one_dim_data.npy.npz"
-        )
+    params = MLParameters()
     train_surrogate(params)
-    '''
-    #params = MLParameters()
-    #train_surrogate(params)
     model = t.load("/u/mgalexan/NPSurr/data/surrogate_model.pt", weights_only= False)
     data = np.load("/u/mgalexan/NPSurr/data/simulation_dataset.npz")
-    print(data["d_val_m"][15], data["tau"][15])
+    print(data["d_val_m"][15], data["k_rel"][15])
     single_traj = {
         "r" : data["r"],
         "t_out" : data["t_out"],
         "CI" : data["CI"][15,15]
     }
-    inverter = SurrogateInversion(model, InversionParameters(), 2)
-    print(inverter.invert(single_traj, True))
+    inverter = SurrogateInversion(model, InversionParameters(), PhysicsConstants(), SimulationParameters())
+    print(inverter.invert(single_traj))

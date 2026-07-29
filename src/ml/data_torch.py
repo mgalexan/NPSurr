@@ -91,15 +91,16 @@ class SimulationDataset(Dataset):
         self.CF = self.data['CF']
         self.CI = self.data['CI']
         self.d_val_m = self.data['d_val_m']
-        self.tau = self.data['tau']
+        self.k_rel = self.data['k_rel']
+        self.k_rel_log = log_transform(self.k_rel, params.k_rel_scale)
         self.C_I_log = log_transform(self.CI, params.CI_scale)
 
         self.params = params
 
         self.d_mean = np.mean(self.d_val_m)
         self.d_std = np.std(self.d_val_m) if len(self.d_val_m) > 1 else 1.0
-        self.tau_mean = np.mean(self.tau)
-        self.tau_std = np.std(self.tau) if len(self.tau) > 1 else 1.0
+        self.k_rel_mean = np.mean(self.k_rel)
+        self.k_rel_std = np.std(self.k_rel_log) if len(self.k_rel_log) > 1 else 1.0
         self.r_mean = np.mean(self.r)
         self.r_std = np.std(self.r) + 1e-30
         self.t_out_mean = np.mean(self.t_out)
@@ -109,7 +110,7 @@ class SimulationDataset(Dataset):
 
         self.norm = {
             "d": [self.d_mean, self.d_std],
-            "tau": [self.tau_mean, self.tau_std],
+            "k_rel": [self.k_rel_mean, self.k_rel_std],
             "t": [self.t_out_mean, self.t_out_std],
             "r": [self.r_mean, self.r_std],
             "CI": [self.CI_mean, self.CI_std]
@@ -119,7 +120,7 @@ class SimulationDataset(Dataset):
     
     def _generate_stratified_indices(self):
         """
-        Generate stratified sampling indices for all (d, tau) pairs.
+        Generate stratified sampling indices for all (d, k_rel) pairs.
         Stores per-parameter-pair indices for intelligent sampling.
         """
         self.indices_by_pair = {}
@@ -130,17 +131,17 @@ class SimulationDataset(Dataset):
         flat_idx = 0
         
         for d_idx in range(len(self.d_val_m)):
-            for tau_idx in range(len(self.tau)):
-                CI_grid = self.CI[d_idx, tau_idx, :, :]
+            for k_rel_idx in range(len(self.k_rel)):
+                CI_grid = self.CI[d_idx, k_rel_idx, :, :]
                 
                 indices, _, _ = stratified_sample_with_weights(
                     CI_grid, self.params.n_unif, self.params.n_strat, rng
                 )
                 
-                self.indices_by_pair[(d_idx, tau_idx)] = indices
+                self.indices_by_pair[(d_idx, k_rel_idx)] = indices
                 
                 for grid_idx in indices:
-                    self.pair_mapping[flat_idx] = (d_idx, tau_idx, grid_idx)
+                    self.pair_mapping[flat_idx] = (d_idx, k_rel_idx, grid_idx)
                     flat_idx += 1
         
         self.sampled_size = flat_idx
@@ -149,7 +150,7 @@ class SimulationDataset(Dataset):
         return self.sampled_size
     
     def __getitem__(self, idx):
-        d_idx, tau_idx, grid_idx = self.pair_mapping[idx]
+        d_idx, k_rel_idx, grid_idx = self.pair_mapping[idx]
         
         # Decode grid index to (t_idx, r_idx)
         Nr = len(self.r)
@@ -157,21 +158,21 @@ class SimulationDataset(Dataset):
         r_idx = grid_idx % Nr
         
         d_val_m = self.d_val_m[d_idx]
-        tau = self.tau[tau_idx]
+        k_rel = self.k_rel_log[k_rel_idx]
         r = self.r[r_idx]
         t_out = self.t_out[t_idx]
-        C_I_log = self.C_I_log[d_idx, tau_idx, t_idx, r_idx]
+        C_I_log = self.C_I_log[d_idx, k_rel_idx, t_idx, r_idx]
 
         # Normalize
         d_val_m_norm = normalize(d_val_m, self.norm["d"][0], self.norm["d"][1])
-        tau_norm = normalize(tau, self.norm["tau"][0], self.norm["tau"][1])
+        k_rel_norm = normalize(k_rel, self.norm["k_rel"][0], self.norm["k_rel"][1])
         t_out_norm = normalize(t_out, self.norm["t"][0], self.norm["t"][1])
         r_norm = normalize(r, self.norm["r"][0], self.norm["r"][1])
         C_I_log_norm = normalize(C_I_log, self.norm["CI"][0], self.norm["CI"][1])
 
         X = t.stack([
             t.tensor(d_val_m_norm, dtype=t.float32), 
-            t.tensor(tau_norm, dtype=t.float32),
+            t.tensor(k_rel_norm, dtype=t.float32),
             t.tensor(t_out_norm, dtype=t.float32),
             t.tensor(r_norm, dtype=t.float32)
         ], dim=0)
@@ -188,42 +189,42 @@ def prepare_torch_datasets(params: MLParameters):
     data = np.load(params.data_filepath)
 
     train_d_idx = np.where(np.isin(data["d_val_m"], params.train_d))
-    train_tau_idx = np.where(np.isin(data["tau"], params.train_tau)) 
-    train_idx_cart = np.stack(np.meshgrid(train_d_idx, train_tau_idx, indexing='ij'), axis=-1)
+    train_k_rel_idx = np.where(np.isin(data["k_rel"], params.train_k_rel)) 
+    train_idx_cart = np.stack(np.meshgrid(train_d_idx, train_k_rel_idx, indexing='ij'), axis=-1)
     
     train_data = {
         "r": data["r"],
         "t_out": data["t_out"],
         "d_val_m": params.train_d,
-        "tau": params.train_tau,
+        "k_rel": params.train_k_rel,
         "CN": data["CN"][train_idx_cart[:,:,0], train_idx_cart[:,:,1]],
         "CF": data["CF"][train_idx_cart[:,:,0], train_idx_cart[:,:,1]],
         "CI": data["CI"][train_idx_cart[:,:,0], train_idx_cart[:,:,1]],
     }
 
     val_d_idx = np.where(np.isin(data["d_val_m"], params.val_d))
-    val_tau_idx = np.where(np.isin(data["tau"], params.val_tau)) 
-    val_idx_cart = np.stack(np.meshgrid(val_d_idx, val_tau_idx, indexing='ij'), axis=-1)
+    val_k_rel_idx = np.where(np.isin(data["k_rel"], params.val_k_rel)) 
+    val_idx_cart = np.stack(np.meshgrid(val_d_idx, val_k_rel_idx, indexing='ij'), axis=-1)
     
     val_data = {
         "r": data["r"],
         "t_out": data["t_out"],
         "d_val_m": params.val_d,
-        "tau": params.val_tau,
+        "k_rel": params.val_k_rel,
         "CN": data["CN"][val_idx_cart[:,:,0], val_idx_cart[:,:,1]],
         "CF": data["CF"][val_idx_cart[:,:,0], val_idx_cart[:,:,1]],
         "CI": data["CI"][val_idx_cart[:,:,0], val_idx_cart[:,:,1]],
     }
 
     test_d_idx = np.where(np.isin(data["d_val_m"], params.test_d))
-    test_tau_idx = np.where(np.isin(data["tau"], params.test_tau)) 
-    test_idx_cart = np.stack(np.meshgrid(test_d_idx, test_tau_idx, indexing='ij'), axis=-1)
+    test_k_rel_idx = np.where(np.isin(data["k_rel"], params.test_k_rel)) 
+    test_idx_cart = np.stack(np.meshgrid(test_d_idx, test_k_rel_idx, indexing='ij'), axis=-1)
     
     test_data = {
         "r": data["r"],
         "t_out": data["t_out"],
         "d_val_m": params.test_d,
-        "tau": params.test_tau,
+        "k_rel": params.test_k_rel,
         "CN": data["CN"][test_idx_cart[:,:,0], test_idx_cart[:,:,1]],
         "CF": data["CF"][test_idx_cart[:,:,0], test_idx_cart[:,:,1]],
         "CI": data["CI"][test_idx_cart[:,:,0], test_idx_cart[:,:,1]],

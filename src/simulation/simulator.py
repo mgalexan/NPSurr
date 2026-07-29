@@ -26,6 +26,15 @@ def P_N_from_dim(constants: PhysicsConstants):
     Pn = P["P0"] * np.exp(-P["chi_P"] * (P["d_val_m"] / P["d_pore"]) ** P["n_exp"])
     return Pn
 
+def alpha_from_dim(constants: PhysicsConstants):
+    """
+    Drug loading, given by fully physical parameters
+    """
+    P = vars(constants)
+    alpha = P["alpha_0"] * (P["d_val_m"] / P["d_0"]) ** 3
+    return alpha
+    #return P["alpha_0"]
+
 def D_N_from_dimless(constants: PhysicsConstants):
     """
     Diffusion coefficient given by the learned parameter a_D.
@@ -43,7 +52,7 @@ def P_N_from_dimless(constants: PhysicsConstants):
     Pn = P["P0"] * np.exp(-P["a_P"] * P["d_val_m"] ** P["n_exp"])
     return Pn
 
-def forward_solver(Pn: float, Dn: float, constants: PhysicsConstants, params: SimulationParameters, verbose=False):
+def forward_solver(Pn: float, Dn: float, alpha, constants: PhysicsConstants, params: SimulationParameters, verbose=False):
     """
     Forward solver for the diffusion-reaction model.
     """
@@ -57,7 +66,7 @@ def forward_solver(Pn: float, Dn: float, constants: PhysicsConstants, params: Si
     CN_g, CF_g = np.empty(P["Nr"]+2), np.empty(P["Nr"]+2)
 
     def Cp_np(t):
-        return P["C_P0"] * np.exp(-np.log(2.0) / P["tau"] * t)
+        return P["C_P0"] * np.exp(-np.log(2.0) / P["tau"] * t) * P["alpha_0"] / alpha
 
     def rhs(t, y):
         CN, CF, CI = y[:P["Nr"]], y[P["Nr"]:2*P["Nr"]], y[2*P["Nr"]:]
@@ -71,7 +80,7 @@ def forward_solver(Pn: float, Dn: float, constants: PhysicsConstants, params: Si
         lap_CN=Dn*(d2CN+2*inv_r*dCN_dr); lap_CN[0]=3*Dn*d2CN[0]
         lap_CF=P["D_F"]*(d2CF+2*inv_r*dCF_dr); lap_CF[0]=3*P["D_F"]*d2CF[0]
         dCN=lap_CN-(P["k_rel"]+P["k_up"])*CN
-        dCF=lap_CF+P["alpha"]*P["k_rel"]*CN-(P["k_int"]+P["k_clr"])*CF
+        dCF=lap_CF+ alpha*P["k_rel"]*CN-(P["k_int"]+P["k_clr"])*CF
         dCI=P["k_int"]*CF-P["k_deg"]*CI
         return np.concatenate([dCN, dCF, dCI])
 
@@ -124,5 +133,6 @@ if __name__ == "__main__":
     params = SimulationParameters()
     DN = D_N_from_dim(constants)
     PN = P_N_from_dim(constants)
-    r, t_out, CN, CF, CI = forward_solver(PN, DN, constants, params)
+    alpha = alpha_from_dim(constants)
+    r, t_out, CN, CF, CI = forward_solver(PN, DN, alpha, constants, params)
     print("Test completed successfully.")
