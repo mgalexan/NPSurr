@@ -34,14 +34,14 @@ class PhysicsConstants:
 @dataclass
 class SimulationParameters:
     R_T: float = 5.0e-3
-    t_f: float = 48.0*3600
+    t_f: float = 24 * 2 *3600
     Nr: int = 100
     Nt_out: int = 200
 
 @dataclass
 class DatasetParameters:
     d_val_m: np.ndarray = np.arange(20, 101, 1) * 1.0e-9
-    k_rel: np.ndarray = np.logspace(-6, -4, 19)
+    k_rel: np.ndarray = np.logspace(-6, -3, 19)
     save: bool = True
     filepath: str = "data/"
     filename: str = "simulation_dataset.npz"
@@ -53,12 +53,13 @@ class MLParameters:
     # ML dataset creation
     data_filepath: str = "/u/mgalexan/NPSurr/data/simulation_dataset.npz"
     val_d: np.ndarray = np.arange(20, 101, 20) * 1.0e-9
-    val_k_rel: np.ndarray = np.logspace(-6, -4, 4)
+    val_k_rel: np.ndarray = np.logspace(-6, -3, 4)
     test_d: np.ndarray = np.array([35, 45, 55, 65]) * 1.0e-9
     test_k_rel: np.ndarray = np.array([1e-6])
     train_d: np.ndarray = np.setdiff1d(np.arange(20, 101, 1) * 1.0e-9, np.concatenate((val_d, test_d)))
-    train_k_rel: np.ndarray = np.setdiff1d(np.logspace(-6, -4, 19), np.concatenate((val_k_rel, test_k_rel)))
+    train_k_rel: np.ndarray = np.setdiff1d(np.logspace(-6, -3, 19), np.concatenate((val_k_rel, test_k_rel)))
     CI_scale: float = 1e-8
+    k_rel_scale: float= 1e-6
     n_unif: int = 200
     n_strat: int = 200
 
@@ -88,5 +89,5 @@ class InversionParameters:
     d_low: float = 20e-9
     d_high: float = 80e-9
     k_rel_low: float = 1e-6
-    k_rel_high: float = 1e-4
+    k_rel_high: float = 1e-3
 

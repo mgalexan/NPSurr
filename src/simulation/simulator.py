@@ -33,6 +33,7 @@ def alpha_from_dim(constants: PhysicsConstants):
     P = vars(constants)
     alpha = P["alpha_0"] * (P["d_val_m"] / P["d_0"]) ** 3
     return alpha
+    #return P["alpha_0"]
 
 def D_N_from_dimless(constants: PhysicsConstants):
     """
@@ -65,7 +66,7 @@ def forward_solver(Pn: float, Dn: float, alpha, constants: PhysicsConstants, par
     CN_g, CF_g = np.empty(P["Nr"]+2), np.empty(P["Nr"]+2)
 
     def Cp_np(t):
-        return P["C_P0"] * np.exp(-np.log(2.0) / P["tau"] * t)
+        return P["C_P0"] * np.exp(-np.log(2.0) / P["tau"] * t) * P["alpha_0"] / alpha
 
     def rhs(t, y):
         CN, CF, CI = y[:P["Nr"]], y[P["Nr"]:2*P["Nr"]], y[2*P["Nr"]:]

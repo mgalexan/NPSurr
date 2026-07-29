@@ -2,7 +2,7 @@ import torch as t
 import torch.nn as nn
 import torch.nn.functional as f
 from torch.utils.data import DataLoader
-from scipy.optimize import minimize
+from scipy.optimize import minimize, differential_evolution
 import time
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -52,7 +52,7 @@ class Surrogate(nn.Module):
         """
         n = self.norm
         x[:, 0] = normalize(x[:,0], n["d"][0], n["d"][1])
-        x[:, 1] = normalize(x[:,1], n["k_rel"][0], n["k_rel"][1])
+        x[:, 1] = normalize(log_transform(x[:,1], self.P["k_rel_scale"]), n["k_rel"][0], n["k_rel"][1])
         x[:, 2] = normalize(x[:,2], n["t"][0], n["t"][1])
         x[:, 3] = normalize(x[:,3], n["r"][0], n["r"][1])
 
@@ -243,7 +243,7 @@ class SurrogateInversion:
         coords = self.coord_tensor.clone().detach()
         if self.n_fit == 2:
             coords[:, 0] *= x[0]
-            coords[:, 1] *= x[1]
+            coords[:, 1] *= np.exp(x[1])
         elif self.n_fit == 1:
             coords[:, 0] *= x[0]
         with t.no_grad():
@@ -254,19 +254,19 @@ class SurrogateInversion:
             err = f.mse_loss(self._pred(x), self.data_tensor)
             return np.log(err.item())
 
-    def _fkc(self, x: np.ndarray): 
+    def _CI(self, x: np.ndarray): 
         res = t.sum(self._pred(x)[:,0] * self.coord_tensor[:, 3] ** 2)
         integral = res.detach().numpy() * self.dt * self.dr * 4 * np.pi ** 2
-        fkc = 1 - np.exp(-0.66 * integral)
-        return -np.log(fkc)
+        return -np.log(integral)
     
-    def _fkc_lim(self, x: np.ndarray):
-        fkc = self._fkc(x)
-        pred = self._pred(x).numpy()
-        count = np.where(pred > self.CI_thresh, np.ones_like(pred), np.zeros_like(pred)).sum()
-        return fkc + count
+    def _CI_center(self, x: np.ndarray): 
+            pred = self._pred(x)[:,0].detach().numpy()
+            rad = self.coord_tensor[:, 3].detach().numpy()
+            rad = np.where(rad < self.params.R_T * 0.5, rad, np.zeros_like(rad))   
+            integral = np.sum(pred * (rad ** 2)) * self.dt * self.dr * 4 * np.pi ** 2
+            return -np.log(integral)
 
-    def _clearance(self, x: np.ndarray):
+    def _uptake(self, x: np.ndarray):
         res = t.sum(self._pred(x)[:,0] * self.coord_tensor[:, 3] ** 2)
         integral_I = res.detach().numpy() * self.dt * self.dr * 4 * np.pi ** 2
 
@@ -283,38 +283,38 @@ class SurrogateInversion:
         self._load_data(data)
         if loss_type == "mse":
             loss = self._loss
-        elif loss_type == "fkc":
-            loss = self._fkc
-        elif loss_type == "fkc_lim":
-            loss = self._fkc_lim
+        elif loss_type == "CI":
+            loss = self._CI
+        elif loss_type == "CI_center":
+            loss = self._CI_center
         elif loss_type == "clearance":
             loss = self._clearance
 
         if self.n_fit == 2:   
-            bounds = [(self.inv.d_low, self.inv.d_high), (self.inv.k_rel_low, self.inv.k_rel_high)]
-            x_0 = np.array([(self.inv.d_low + self.inv.d_high) / 2, (self.inv.k_rel_low + self.inv.k_rel_high) / 2])
+            bounds = [(self.inv.d_low, self.inv.d_high), (np.log(self.inv.k_rel_low), np.log(self.inv.k_rel_high))]
         elif self.n_fit == 1:
             bounds = [(self.inv.d_low, self.inv.d_high)]
-            x_0 = np.array([(self.inv.d_low + self.inv.d_high) / 2])
 
-        res = minimize(loss, x_0, bounds= bounds, method='Nelder-Mead')
-        
+        res = differential_evolution(loss, bounds= bounds)
+        opt_vals = res.x
+        opt_vals[1] = np.exp(opt_vals[1])
 
-        return res
+        return opt_vals
 
     def loss_surface(self, obs: dict, d_grid, k_rel_grid, loss_type="mse"):
         self._load_data(obs)
         L_surf = np.empty((len(d_grid), len(k_rel_grid)))
         for i, d in enumerate(tqdm(d_grid)):
             for j, k in enumerate(k_rel_grid):
+                k = np.log(k)
                 if loss_type == "mse":
                     L_surf[i, j] = self._loss(np.array([d, k]))
-                elif loss_type == "fkc":
-                    L_surf[i, j] = -self._fkc(np.array([d, k]))
-                elif loss_type == "fkc_lim":
-                    L_surf[i, j] = -self._fkc_lim(np.array([d, k]))
-                elif loss_type == "clearance":
-                    L_surf[i, j] = -self._clearance(np.array([d, k]))
+                elif loss_type == "CI":
+                    L_surf[i, j] = -self._CI(np.array([d, k]))
+                elif loss_type == "CI_center":
+                                    L_surf[i, j] = -self._CI_center(np.array([d, k]))
+                elif loss_type == "uptake":
+                    L_surf[i, j] = -self._uptake(np.array([d, k]))
         return L_surf
     
     def pde_misfit_surface(self, obs: dict, d_grid, k_rel_grid, loss_type="mse"):
@@ -327,17 +327,16 @@ class SurrogateInversion:
                 r, _, _, _, CI = forward_solver(P_N, D_N, alpha, self.phys, self.params)
                 if loss_type == "mse":
                     loss = np.mean((CI - obs["CI"]) ** 2)
-                elif loss_type == "fkc": 
-                    res = np.sum(CI * r ** 2)
+                elif loss_type == "CI": 
+                    res = np.sum(CI * (r) ** 2)
                     integral = res * self.dt * self.dr * 4 * np.pi**2
-                    loss = 1 - np.exp(-0.66 * integral)
-                elif loss_type == "fkc_lim": 
-                    res = np.sum(CI * r ** 2)
+                    loss = integral
+                elif loss_type == "CI_center":
+                    rad = np.where(r < self.params.R_T * 0.5, r, np.zeros_like(r))
+                    res = np.sum(CI * (rad ** 2))
                     integral = res * self.dt * self.dr * 4 * np.pi**2
-                    fkc = 1 - np.exp(-0.66 * integral)
-                    pen = np.where(CI > self.CI_thresh, np.ones_like(CI), np.zeros_like(CI)).sum()
-                    loss = fkc / np.exp(pen)
-                elif loss_type == "clearance":
+                    loss = integral
+                elif loss_type == "uptake":
                     res = np.sum(CI * r ** 2)
                     integral_I = res * self.dt * self.dr * 4 * np.pi**2
                     integral_P = (self.phys.C_P0 * self.phys.tau / np.log(2)) * (1 - np.exp(- np.log(2) * self.params.t_f / self.phys.tau))
@@ -347,8 +346,8 @@ class SurrogateInversion:
 
 
 if __name__ == "__main__":
-    #params = MLParameters()
-    #train_surrogate(params)
+    params = MLParameters()
+    train_surrogate(params)
     model = t.load("/u/mgalexan/NPSurr/data/surrogate_model.pt", weights_only= False)
     data = np.load("/u/mgalexan/NPSurr/data/simulation_dataset.npz")
     print(data["d_val_m"][15], data["k_rel"][15])

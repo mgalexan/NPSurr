@@ -92,6 +92,7 @@ class SimulationDataset(Dataset):
         self.CI = self.data['CI']
         self.d_val_m = self.data['d_val_m']
         self.k_rel = self.data['k_rel']
+        self.k_rel_log = log_transform(self.k_rel, params.k_rel_scale)
         self.C_I_log = log_transform(self.CI, params.CI_scale)
 
         self.params = params
@@ -99,7 +100,7 @@ class SimulationDataset(Dataset):
         self.d_mean = np.mean(self.d_val_m)
         self.d_std = np.std(self.d_val_m) if len(self.d_val_m) > 1 else 1.0
         self.k_rel_mean = np.mean(self.k_rel)
-        self.k_rel_std = np.std(self.k_rel) if len(self.k_rel) > 1 else 1.0
+        self.k_rel_std = np.std(self.k_rel_log) if len(self.k_rel_log) > 1 else 1.0
         self.r_mean = np.mean(self.r)
         self.r_std = np.std(self.r) + 1e-30
         self.t_out_mean = np.mean(self.t_out)
@@ -157,7 +158,7 @@ class SimulationDataset(Dataset):
         r_idx = grid_idx % Nr
         
         d_val_m = self.d_val_m[d_idx]
-        k_rel = self.k_rel[k_rel_idx]
+        k_rel = self.k_rel_log[k_rel_idx]
         r = self.r[r_idx]
         t_out = self.t_out[t_idx]
         C_I_log = self.C_I_log[d_idx, k_rel_idx, t_idx, r_idx]
