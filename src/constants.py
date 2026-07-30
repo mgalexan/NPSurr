@@ -5,7 +5,7 @@ import torch as t
 @dataclass
 class PhysicsConstants:
     C_P0: float = 1.0e-3
-    tau: float = 12.0*3600
+    tau_ref: float = 6.0*3600
     k_B: float = 1.380649e-23
     T_K: float = 310.0
     eta: float = 1.0e-3
@@ -26,6 +26,7 @@ class PhysicsConstants:
     P_F: float = 1.27e-8
     alpha_0: int = 300
     d_0: float = 20e-9
+    q: int = 2
 
     # Learned values
     a_D : float = chi_D / (xi_ECM ** m_exp)

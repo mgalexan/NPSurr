@@ -63,10 +63,12 @@ def forward_solver(Pn: float, Dn: float, alpha, constants: PhysicsConstants, par
     ratio = Pn / Dn
     inv_r = np.divide(1.0, r, out=np.zeros_like(r), where=r > 0)
 
+    tau = P["tau_ref"] * (P["d_val_m"] / P["d_0"]) ** P["q"]
+
     CN_g, CF_g = np.empty(P["Nr"]+2), np.empty(P["Nr"]+2)
 
     def Cp_np(t):
-        return P["C_P0"] * np.exp(-np.log(2.0) / P["tau"] * t) * P["alpha_0"] / alpha
+        return P["C_P0"] * np.exp(-np.log(2.0) / tau * t) * P["alpha_0"] / alpha
 
     def rhs(t, y):
         CN, CF, CI = y[:P["Nr"]], y[P["Nr"]:2*P["Nr"]], y[2*P["Nr"]:]
