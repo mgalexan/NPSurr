@@ -89,6 +89,7 @@ class SimulationDataset(Dataset):
         self.t_out = self.data['t_out']
         self.CN = self.data['CN']
         self.CF = self.data['CF']
+        self.CIN = self.data['CIN']
         self.CI = self.data['CI']
         self.d_val_m = self.data['d_val_m']
         self.k_rel = self.data['k_rel']
@@ -199,6 +200,7 @@ def prepare_torch_datasets(params: MLParameters):
         "k_rel": params.train_k_rel,
         "CN": data["CN"][train_idx_cart[:,:,0], train_idx_cart[:,:,1]],
         "CF": data["CF"][train_idx_cart[:,:,0], train_idx_cart[:,:,1]],
+        "CIN": data["CIN"][train_idx_cart[:,:,0], train_idx_cart[:,:,1]],
         "CI": data["CI"][train_idx_cart[:,:,0], train_idx_cart[:,:,1]],
     }
 
@@ -213,6 +215,7 @@ def prepare_torch_datasets(params: MLParameters):
         "k_rel": params.val_k_rel,
         "CN": data["CN"][val_idx_cart[:,:,0], val_idx_cart[:,:,1]],
         "CF": data["CF"][val_idx_cart[:,:,0], val_idx_cart[:,:,1]],
+        "CIN": data["CIN"][val_idx_cart[:,:,0], val_idx_cart[:,:,1]],
         "CI": data["CI"][val_idx_cart[:,:,0], val_idx_cart[:,:,1]],
     }
 
@@ -227,6 +230,7 @@ def prepare_torch_datasets(params: MLParameters):
         "k_rel": params.test_k_rel,
         "CN": data["CN"][test_idx_cart[:,:,0], test_idx_cart[:,:,1]],
         "CF": data["CF"][test_idx_cart[:,:,0], test_idx_cart[:,:,1]],
+        "CIN": data["CIN"][test_idx_cart[:,:,0], test_idx_cart[:,:,1]],
         "CI": data["CI"][test_idx_cart[:,:,0], test_idx_cart[:,:,1]],
     }
     
@@ -242,7 +246,7 @@ def prepare_torch_datasets(params: MLParameters):
 
 
 if __name__ == "__main__":
-    params = MLParameters()
+    params = MLParameters(data_filepath="/u/mgalexan/NPSurr/data/sim_cin.npz")
     
     train, val, test = prepare_torch_datasets(params)
     print(len(train), len(val), len(test))

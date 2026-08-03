@@ -15,7 +15,7 @@ def pde_misfit(data: np.ndarray, t_obs_idx: np.ndarray, r_obs_idx: np.ndarray, D
     Compute the difference between a given dataset and the forward simulation of the PDE
     """
     alpha = alpha_from_dim(phys)
-    r, t_out, CN, CF, CI = forward_solver(P_N, D_N, alpha, phys, params)
+    r, t_out, CN, CF, CIN, CI = forward_solver(P_N, D_N, alpha, phys, params)
 
     CN = CN[np.ix_(t_obs_idx, r_obs_idx)]
 

@@ -105,7 +105,7 @@ def train_surrogate(params: MLParameters):
     sample_P_N = P_N_from_dim(phys_const)
     sample_D_N = D_N_from_dim(phys_const)
     sample_alpha = alpha_from_dim(phys_const)
-    r_true, t_true, CN_true, CF_true, CI_true = forward_solver(
+    r_true, t_true, CN_true, CF_true, CIN_true, CI_true = forward_solver(
         sample_P_N, sample_D_N, sample_alpha, phys_const, sim_params, verbose=False
     )
     true_spatial_profile = CI_true[t_idx_12h, :]
@@ -324,7 +324,7 @@ class SurrogateInversion:
             for j, k in enumerate(k_rel_grid):
                 self.phys.d_val_m = d; self.phys.k_rel = k
                 P_N = P_N_from_dim(self.phys); D_N = D_N_from_dimless(self.phys); alpha = alpha_from_dim(self.phys)
-                r, _, _, _, CI = forward_solver(P_N, D_N, alpha, self.phys, self.params)
+                r, _, _, _, _, CI = forward_solver(P_N, D_N, alpha, self.phys, self.params)
                 if loss_type == "mse":
                     loss = np.mean((CI - obs["CI"]) ** 2)
                 elif loss_type == "CI": 
@@ -346,10 +346,10 @@ class SurrogateInversion:
 
 
 if __name__ == "__main__":
-    params = MLParameters()
+    params = MLParameters(data_filepath= "/u/mgalexan/NPSurr/data/sim_cin.npz", save_path="/u/mgalexan/NPSurr/data/cin_model.pt")
     train_surrogate(params)
-    model = t.load("/u/mgalexan/NPSurr/data/surrogate_model.pt", weights_only= False)
-    data = np.load("/u/mgalexan/NPSurr/data/simulation_dataset.npz")
+    model = t.load("/u/mgalexan/NPSurr/data/cin_model.pt", weights_only= False)
+    data = np.load("/u/mgalexan/NPSurr/data/sim_cin.npz")
     print(data["d_val_m"][15], data["k_rel"][15])
     single_traj = {
         "r" : data["r"],

@@ -17,7 +17,6 @@ class PhysicsConstants:
     d_pore: float = 100.0e-9
     n_exp: float = 2.0
     k_rel: float = 1.0e-5
-    k_up: float = 5.0e-6
     D_F: float = 1.0e-11
     k_int: float = 2.0e-5
     k_clr: float = 1.0e-5
@@ -26,6 +25,10 @@ class PhysicsConstants:
     P_F: float = 1.27e-8
     alpha_0: int = 300
     d_0: float = 20e-9
+    k_up_min: float = 1.0e-5
+    k_up_max: float = 1.0e-4
+    d_opt : float = 50.0e-9
+    sigma_d : float = 20e-9
 
     # Learned values
     a_D : float = chi_D / (xi_ECM ** m_exp)
@@ -41,7 +44,7 @@ class SimulationParameters:
 @dataclass
 class DatasetParameters:
     d_val_m: np.ndarray = np.arange(20, 101, 1) * 1.0e-9
-    k_rel: np.ndarray = np.logspace(-6, -3, 19)
+    k_rel: np.ndarray = np.logspace(-6, -2, 19)
     save: bool = True
     filepath: str = "data/"
     filename: str = "simulation_dataset.npz"
@@ -53,11 +56,11 @@ class MLParameters:
     # ML dataset creation
     data_filepath: str = "/u/mgalexan/NPSurr/data/simulation_dataset.npz"
     val_d: np.ndarray = np.arange(20, 101, 20) * 1.0e-9
-    val_k_rel: np.ndarray = np.logspace(-6, -3, 4)
+    val_k_rel: np.ndarray = np.logspace(-6, -2, 4)
     test_d: np.ndarray = np.array([35, 45, 55, 65]) * 1.0e-9
     test_k_rel: np.ndarray = np.array([1e-6])
     train_d: np.ndarray = np.setdiff1d(np.arange(20, 101, 1) * 1.0e-9, np.concatenate((val_d, test_d)))
-    train_k_rel: np.ndarray = np.setdiff1d(np.logspace(-6, -3, 19), np.concatenate((val_k_rel, test_k_rel)))
+    train_k_rel: np.ndarray = np.setdiff1d(np.logspace(-6, -2, 19), np.concatenate((val_k_rel, test_k_rel)))
     CI_scale: float = 1e-8
     k_rel_scale: float= 1e-6
     n_unif: int = 200
@@ -89,5 +92,5 @@ class InversionParameters:
     d_low: float = 20e-9
     d_high: float = 80e-9
     k_rel_low: float = 1e-6
-    k_rel_high: float = 1e-3
+    k_rel_high: float = 1e-2
 
