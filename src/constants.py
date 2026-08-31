@@ -2,6 +2,8 @@ from dataclasses import dataclass
 import numpy as np
 import torch as t
 
+ROOT = "/u/mgalexan/NPSurr"
+
 @dataclass
 class PhysicsConstants:
     C_P0: float = 1.0e-3
@@ -54,7 +56,7 @@ class DatasetParameters:
 class MLParameters:
 
     # ML dataset creation
-    data_filepath: str = "/u/mgalexan/NPSurr/data/simulation_dataset.npz"
+    data_filepath: str = f"{ROOT}/data/simulation_dataset.npz"
     val_d: np.ndarray = np.arange(20, 101, 20) * 1.0e-9
     val_k_rel: np.ndarray = np.logspace(-6, -2, 4)
     test_d: np.ndarray = np.array([35, 45, 55, 65]) * 1.0e-9
@@ -76,7 +78,7 @@ class MLParameters:
     LR_MIN: int = 1e-5
     N_EPOCHS: int = 150
     BATCH_SIZE: int = 2048
-    save_path: str = "/u/mgalexan/NPSurr/data/surrogate_model.pt"
+    save_path: str = f"{ROOT}/data/surrogate_model.pt"
 
     DEVICE: str = "cuda" if t.cuda.is_available() else "cpu"
 

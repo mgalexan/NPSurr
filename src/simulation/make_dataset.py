@@ -15,7 +15,7 @@ def add_noise(data: np.ndarray, noise_level: float):
     noise = rng.normal(0, sigma, size=data.shape)
     return data + noise
 
-def make_dataset(constants: PhysicsConstants, params: SimulationParameters, dataset_params: DatasetParameters, dim: bool = True):
+def make_dataset(constants: PhysicsConstants, params: SimulationParameters, dataset_params: DatasetParameters, dim: bool = True, ablate: str = None):
     '''
     Generate simulations on a grid of parameters and save the results to a .npz file.
     '''
@@ -26,14 +26,23 @@ def make_dataset(constants: PhysicsConstants, params: SimulationParameters, data
             C.d_val_m = d_val_m
             C.k_rel = k_rel
             if dim:
-                DN = D_N_from_dim(C)
-                PN = P_N_from_dim(C)
-                alpha = alpha_from_dim(C)
+                D_N_func = D_N_from_dim
+                P_N_func = P_N_from_dim
             else:
-                DN = D_N_from_dimless(C)
-                PN = P_N_from_dimless(C)
+                D_N_func = D_N_from_dimless
+                P_N_func = P_N_from_dimless
+            if ablate == "transport":
+                DN = D_N_func(constants) 
+                PN = P_N_func(constants)
+            else:
+                DN = D_N_func(C) 
+                PN = P_N_func(C)
+            if ablate == "loading":
+                alpha = alpha_from_dim(constants)
+            else:
                 alpha = alpha_from_dim(C)
-            r, t_out, CN, CF, CIN, CI = forward_solver(PN, DN, alpha, C, params)
+            
+            r, t_out, CN, CF, CIN, CI = forward_solver(PN, DN, alpha, C, params, ablate = ablate)
             if dataset_params.noise_level > 0.0:
                 CN = add_noise(CN, dataset_params.noise_level)
                 CF = add_noise(CF, dataset_params.noise_level)

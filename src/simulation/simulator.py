@@ -33,7 +33,16 @@ def alpha_from_dim(constants: PhysicsConstants):
     P = vars(constants)
     alpha = P["alpha_0"] * (P["d_val_m"] / P["d_0"]) ** 3
     return alpha
-    #return P["alpha_0"]
+
+
+def k_up_from_dim(constants: PhysicsConstants):
+    """
+    Cellular uptake, given by fully physical parameters
+    """
+    P = vars(constants)
+    k_up = P["k_up_min"] + (P["k_up_max"] - P["k_up_min"]) * np.exp(-((P["d_val_m"] - P["d_opt"]) ** 2) / (2 * P["sigma_d"] ** 2))
+    return k_up
+
 
 def D_N_from_dimless(constants: PhysicsConstants):
     """
@@ -52,7 +61,8 @@ def P_N_from_dimless(constants: PhysicsConstants):
     Pn = P["P0"] * np.exp(-P["a_P"] * P["d_val_m"] ** P["n_exp"])
     return Pn
 
-def forward_solver(Pn: float, Dn: float, alpha, constants: PhysicsConstants, params: SimulationParameters, verbose=False):
+
+def forward_solver(Pn: float, Dn: float, alpha, constants: PhysicsConstants, params: SimulationParameters, verbose=False, ablate = None):
     """
     Forward solver for the diffusion-reaction model.
     """
@@ -62,9 +72,11 @@ def forward_solver(Pn: float, Dn: float, alpha, constants: PhysicsConstants, par
     dr = r[1] - r[0]
     ratio = Pn / Dn
     inv_r = np.divide(1.0, r, out=np.zeros_like(r), where=r > 0)
-
-    k_up = P["k_up_min"] + (P["k_up_max"] - P["k_up_min"]) * np.exp(-((P["d_val_m"] - P["d_opt"]) ** 2) / (2 * P["sigma_d"] ** 2))
-
+    if ablate == "uptake":
+        k_up = P["k_up_min"] + (P["k_up_max"] - P["k_up_min"]) * np.exp(-((40e-9 - P["d_opt"]) ** 2) / (2 * P["sigma_d"] ** 2))
+    else:
+        k_up = k_up_from_dim(constants)
+        
     CN_g, CF_g = np.empty(P["Nr"]+2), np.empty(P["Nr"]+2)
 
     def Cp_np(t):
