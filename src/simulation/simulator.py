@@ -33,7 +33,16 @@ def alpha_from_dim(constants: PhysicsConstants):
     P = vars(constants)
     alpha = P["alpha_0"] * (P["d_val_m"] / P["d_0"]) ** 3
     return alpha
-    #return P["alpha_0"]
+
+
+def k_up_from_dim(constants: PhysicsConstants):
+    """
+    Cellular uptake, given by fully physical parameters
+    """
+    P = vars(constants)
+    k_up = P["k_up_min"] + (P["k_up_max"] - P["k_up_min"]) * np.exp(-((P["d_val_m"] - P["d_opt"]) ** 2) / (2 * P["sigma_d"] ** 2))
+    return k_up
+
 
 def D_N_from_dimless(constants: PhysicsConstants):
     """
@@ -52,7 +61,8 @@ def P_N_from_dimless(constants: PhysicsConstants):
     Pn = P["P0"] * np.exp(-P["a_P"] * P["d_val_m"] ** P["n_exp"])
     return Pn
 
-def forward_solver(Pn: float, Dn: float, alpha, constants: PhysicsConstants, params: SimulationParameters, verbose=False):
+
+def forward_solver(Pn: float, Dn: float, alpha, constants: PhysicsConstants, params: SimulationParameters, verbose=False, ablate = None):
     """
     Forward solver for the diffusion-reaction model.
     """
@@ -62,14 +72,18 @@ def forward_solver(Pn: float, Dn: float, alpha, constants: PhysicsConstants, par
     dr = r[1] - r[0]
     ratio = Pn / Dn
     inv_r = np.divide(1.0, r, out=np.zeros_like(r), where=r > 0)
-
+    if ablate == "uptake":
+        k_up = P["k_up_min"] + (P["k_up_max"] - P["k_up_min"]) * np.exp(-((40e-9 - P["d_opt"]) ** 2) / (2 * P["sigma_d"] ** 2))
+    else:
+        k_up = k_up_from_dim(constants)
+        
     CN_g, CF_g = np.empty(P["Nr"]+2), np.empty(P["Nr"]+2)
 
     def Cp_np(t):
         return P["C_P0"] * np.exp(-np.log(2.0) / P["tau"] * t) * P["alpha_0"] / alpha
 
     def rhs(t, y):
-        CN, CF, CI = y[:P["Nr"]], y[P["Nr"]:2*P["Nr"]], y[2*P["Nr"]:]
+        CN, CF, C_IN, CI = y[:P["Nr"]], y[P["Nr"]:2*P["Nr"]], y[2*P["Nr"]:3*P["Nr"]], y[3*P["Nr"]:]
         Cp = Cp_np(t)
         CN_g[0]=CN[1]; CN_g[1:-1]=CN; CN_g[-1]=CN[-2]+2*dr*ratio*(Cp-CN[-1])
         CF_g[0]=CF[1]; CF_g[1:-1]=CF; CF_g[-1]=CF[-2]
@@ -79,18 +93,19 @@ def forward_solver(Pn: float, Dn: float, alpha, constants: PhysicsConstants, par
         dCF_dr=(CF_g[2:]-CF_g[:-2])/(2*dr)
         lap_CN=Dn*(d2CN+2*inv_r*dCN_dr); lap_CN[0]=3*Dn*d2CN[0]
         lap_CF=P["D_F"]*(d2CF+2*inv_r*dCF_dr); lap_CF[0]=3*P["D_F"]*d2CF[0]
-        dCN=lap_CN-(P["k_rel"]+P["k_up"])*CN
+        dCN=lap_CN-(P["k_rel"]+k_up)*CN
         dCF=lap_CF+ alpha*P["k_rel"]*CN-(P["k_int"]+P["k_clr"])*CF
-        dCI=P["k_int"]*CF-P["k_deg"]*CI
-        return np.concatenate([dCN, dCF, dCI])
+        dC_IN = k_up*CN - (P["k_rel"] + P["k_deg"]) * C_IN
+        dCI=P["k_int"]*CF-P["k_deg"]*CI+alpha*P["k_rel"]*C_IN
+        return np.concatenate([dCN, dCF, dC_IN, dCI])
 
     t_out = np.linspace(0., t_f, P["Nt_out"])
-    sol = solve_ivp(rhs, [0., t_f], np.zeros(3*P["Nr"]),
+    sol = solve_ivp(rhs, [0., t_f], np.zeros(4*P["Nr"]),
                     method="RK45", t_eval=t_out, rtol=1e-6, atol=1e-10)
     if not sol.success:
         raise RuntimeError(f"Solver failed: {sol.message}")
-    CN, CF, CI = sol.y[:P["Nr"], :].T, sol.y[P["Nr"]:2*P["Nr"], :].T, sol.y[2*P["Nr"]:, :].T
-    return r, t_out, CN, CF, CI
+    CN, CF, C_IN, CI = sol.y[:P["Nr"], :].T, sol.y[P["Nr"]:2*P["Nr"], :].T, sol.y[2*P["Nr"]:3*P["Nr"], :].T, sol.y[3*P["Nr"]:, :].T
+    return r, t_out, CN, CF, C_IN, CI
 
 def forward_solver_free(constants: PhysicsConstants, params: SimulationParameters, verbose=False):
     """
@@ -134,5 +149,5 @@ if __name__ == "__main__":
     DN = D_N_from_dim(constants)
     PN = P_N_from_dim(constants)
     alpha = alpha_from_dim(constants)
-    r, t_out, CN, CF, CI = forward_solver(PN, DN, alpha, constants, params)
+    r, t_out, CN, CF, C_IN, CI = forward_solver(PN, DN, alpha, constants, params)
     print("Test completed successfully.")

@@ -12,6 +12,8 @@ import numpy as np
 from ml.data_torch import *
 from simulation.simulator import *
 from constants import MLParameters, InversionParameters, PhysicsConstants, SimulationParameters
+import time
+
 
 """
 Surrogate Model for the inverse problem
@@ -105,7 +107,7 @@ def train_surrogate(params: MLParameters):
     sample_P_N = P_N_from_dim(phys_const)
     sample_D_N = D_N_from_dim(phys_const)
     sample_alpha = alpha_from_dim(phys_const)
-    r_true, t_true, CN_true, CF_true, CI_true = forward_solver(
+    r_true, t_true, CN_true, CF_true, CIN_true, CI_true = forward_solver(
         sample_P_N, sample_D_N, sample_alpha, phys_const, sim_params, verbose=False
     )
     true_spatial_profile = CI_true[t_idx_12h, :]
@@ -144,17 +146,6 @@ def train_surrogate(params: MLParameters):
             best_val = val_loss
             best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
 
-        # Generate animation frame: spatial profile at t=12h
-        with t.no_grad():
-            t_r_grid = np.meshgrid(sample_t[t_idx_12h], sample_r, indexing="ij")
-            coords_frame = np.stack([t_r_grid[0].ravel(), t_r_grid[1].ravel()], axis=-1)
-            d_k_rel_ones = np.ones((len(coords_frame), 2)) * np.array([sample_d, sample_k_rel])
-            full_coords = np.concatenate([d_k_rel_ones, coords_frame], axis=1)
-            full_coords_tensor = t.tensor(full_coords).float().to(params.DEVICE)
-            
-            # Forward pass through network with physical normalization
-            pred_frame = model.forward_physical(full_coords_tensor).cpu().numpy().flatten()
-            animation_frames.append(pred_frame)
 
         if epoch % 25 == 0 or epoch == 1:
             lr_now = opt.param_groups[0]["lr"]
@@ -163,51 +154,9 @@ def train_surrogate(params: MLParameters):
     model.load_state_dict(best_state)
     print(f"\nBest val MSE = {best_val:.4e}  ({time.time()-t0_tr:.0f}s total)")
     t.save(model, params.save_path)
-    
-    # Create and save animation
-    _save_training_animation(animation_frames, sample_r, true_spatial_profile, sample_d, sample_k_rel, 
-                            sample_t[t_idx_12h], params.save_path.replace('.pt', '_training.mp4'))
-    
+        
     return trn_hist, val_hist
 
-
-def _save_training_animation(frames, r_vals, true_profile, d_val, k_rel_val, t_val, output_path):
-    """
-    Save spatial concentration profiles across training epochs as an animation.
-    
-    Parameters:
-    - frames: list of 1D arrays, each containing the spatial profile at a time point
-    - r_vals: spatial grid points (meters)
-    - true_profile: 1D array of true spatial profile at the fixed time
-    - d_val: particle diameter (meters)
-    - k_rel_val: release rate (herz)
-    - t_val: time point (seconds)
-    - output_path: path to save the mp4 animation
-    """
-    fig, ax = plt.subplots(figsize=(10, 6))
-    
-    # Precompute axis limits including both true and predicted
-    all_frames = np.array(frames)
-    all_values = np.concatenate([all_frames.ravel(), true_profile.ravel()])
-    vmin, vmax = all_values.min(), all_values.max()
-    vmin -= 0.1 * (vmax - vmin)  # Add 10% padding
-    vmax += 0.1 * (vmax - vmin)
-    
-    def animate(frame_idx):
-        ax.clear()
-        ax.plot(r_vals * 1e6, true_profile, 'r-', linewidth=2.5, label='True (PDE)', alpha=0.8)
-        ax.plot(r_vals * 1e6, frames[frame_idx], 'b-', linewidth=2, label='Surrogate (NN)', alpha=0.8)
-        ax.set_xlabel(r'Radius $r$ ($\mu$m)', fontsize=11)
-        ax.set_ylabel(r'Concentration $C_I$ (mol/m³)', fontsize=11)
-        ax.set_ylim([vmin, vmax])
-        ax.legend(loc='best', fontsize=10)
-        ax.set_title(f"Epoch {frame_idx+1}: Spatial profile at $t$=12h\n$d$={d_val*1e9:.0f}nm, $\\k_rel$={k_rel_val/3600:.1f}h", fontsize=12)
-        ax.grid(alpha=0.3)
-    
-    anim = animation.FuncAnimation(fig, animate, frames=len(frames), interval=50, repeat=True)
-    anim.save(output_path, writer='ffmpeg', fps=20, dpi=100)
-    plt.close(fig)
-    print(f"Animation saved to {output_path}")
 
 class SurrogateInversion:
     """
@@ -224,6 +173,7 @@ class SurrogateInversion:
         self.CI_thresh = CI_thresh
     
     def _load_data(self, data: dict):
+        self.obs = data
         data_target = data["CI"].flatten()
         self.dr = data["r"][1] - data["r"][0]
         self.dt = data["t_out"][1] - data["t_out"][0]
@@ -254,21 +204,35 @@ class SurrogateInversion:
             err = f.mse_loss(self._pred(x), self.data_tensor)
             return np.log(err.item())
 
+    def _loss_sim(self, x: np.ndarray):
+        self.phys.d_val_m = x[0]; self.phys.k_rel = np.exp(x[1])
+        P_N = P_N_from_dim(self.phys); D_N = D_N_from_dimless(self.phys); alpha = alpha_from_dim(self.phys)
+        r, _, _, _, _, CI = forward_solver(P_N, D_N, alpha, self.phys, self.params)
+        return np.log(np.mean((CI - self.obs["CI"]) ** 2))
+
     def _CI(self, x: np.ndarray): 
         res = t.sum(self._pred(x)[:,0] * self.coord_tensor[:, 3] ** 2)
-        integral = res.detach().numpy() * self.dt * self.dr * 4 * np.pi ** 2
+        integral = res.detach().numpy() * self.dt * self.dr * 4 * np.pi
+        return -np.log(integral)
+
+    def _CI_sim(self, x: np.ndarray):
+        self.phys.d_val_m = x[0]; self.phys.k_rel = np.exp(x[1])
+        P_N = P_N_from_dim(self.phys); D_N = D_N_from_dimless(self.phys); alpha = alpha_from_dim(self.phys)
+        r, _, _, _, _, CI = forward_solver(P_N, D_N, alpha, self.phys, self.params)
+        res = np.sum(CI * (r) ** 2)
+        integral = res * self.dt * self.dr * 4 * np.pi
         return -np.log(integral)
     
     def _CI_center(self, x: np.ndarray): 
             pred = self._pred(x)[:,0].detach().numpy()
             rad = self.coord_tensor[:, 3].detach().numpy()
             rad = np.where(rad < self.params.R_T * 0.5, rad, np.zeros_like(rad))   
-            integral = np.sum(pred * (rad ** 2)) * self.dt * self.dr * 4 * np.pi ** 2
+            integral = np.sum(pred * (rad ** 2)) * self.dt * self.dr * 4 * np.pi
             return -np.log(integral)
 
     def _uptake(self, x: np.ndarray):
         res = t.sum(self._pred(x)[:,0] * self.coord_tensor[:, 3] ** 2)
-        integral_I = res.detach().numpy() * self.dt * self.dr * 4 * np.pi ** 2
+        integral_I = res.detach().numpy() * self.dt * self.dr * 4 * np.pi
 
         tau = self.phys.tau
         integral_P = (self.phys.C_P0 * tau / np.log(2)) * (1 - np.exp(- np.log(2) * self.params.t_f / tau))
@@ -278,27 +242,37 @@ class SurrogateInversion:
 
 
 
-    def invert(self, data: dict, loss_type= "mse"):
+    def invert(self, data: dict, loss_type= "mse", timing = False):
 
         self._load_data(data)
         if loss_type == "mse":
             loss = self._loss
+        elif loss_type == "mse_sim":
+                    loss = self._loss_sim
         elif loss_type == "CI":
             loss = self._CI
         elif loss_type == "CI_center":
             loss = self._CI_center
         elif loss_type == "clearance":
             loss = self._clearance
+        elif loss_type == "CI_sim":
+            loss = self._CI_sim
 
         if self.n_fit == 2:   
             bounds = [(self.inv.d_low, self.inv.d_high), (np.log(self.inv.k_rel_low), np.log(self.inv.k_rel_high))]
         elif self.n_fit == 1:
             bounds = [(self.inv.d_low, self.inv.d_high)]
 
+        start_time = time.perf_counter()
         res = differential_evolution(loss, bounds= bounds)
-        opt_vals = res.x
-        opt_vals[1] = np.exp(opt_vals[1])
-
+        end_time = time.perf_counter()
+        execution_time = end_time - start_time
+        if timing:
+            return execution_time
+        else:
+            opt_vals = res.x
+            opt_vals[1] = np.exp(opt_vals[1])
+        
         return opt_vals
 
     def loss_surface(self, obs: dict, d_grid, k_rel_grid, loss_type="mse"):
@@ -324,21 +298,21 @@ class SurrogateInversion:
             for j, k in enumerate(k_rel_grid):
                 self.phys.d_val_m = d; self.phys.k_rel = k
                 P_N = P_N_from_dim(self.phys); D_N = D_N_from_dimless(self.phys); alpha = alpha_from_dim(self.phys)
-                r, _, _, _, CI = forward_solver(P_N, D_N, alpha, self.phys, self.params)
+                r, _, _, _, _, CI = forward_solver(P_N, D_N, alpha, self.phys, self.params)
                 if loss_type == "mse":
                     loss = np.mean((CI - obs["CI"]) ** 2)
                 elif loss_type == "CI": 
                     res = np.sum(CI * (r) ** 2)
-                    integral = res * self.dt * self.dr * 4 * np.pi**2
+                    integral = res * self.dt * self.dr * 4 * np.pi
                     loss = integral
                 elif loss_type == "CI_center":
                     rad = np.where(r < self.params.R_T * 0.5, r, np.zeros_like(r))
                     res = np.sum(CI * (rad ** 2))
-                    integral = res * self.dt * self.dr * 4 * np.pi**2
+                    integral = res * self.dt * self.dr * 4 * np.pi
                     loss = integral
                 elif loss_type == "uptake":
                     res = np.sum(CI * r ** 2)
-                    integral_I = res * self.dt * self.dr * 4 * np.pi**2
+                    integral_I = res * self.dt * self.dr * 4 * np.pi
                     integral_P = (self.phys.C_P0 * self.phys.tau / np.log(2)) * (1 - np.exp(- np.log(2) * self.params.t_f / self.phys.tau))
                     loss = integral_I / integral_P
                 L_surf[i, j] = loss
@@ -346,10 +320,11 @@ class SurrogateInversion:
 
 
 if __name__ == "__main__":
-    params = MLParameters()
-    train_surrogate(params)
-    model = t.load("/u/mgalexan/NPSurr/data/surrogate_model.pt", weights_only= False)
-    data = np.load("/u/mgalexan/NPSurr/data/simulation_dataset.npz")
+    params = MLParameters(data_filepath= "/u/mgalexan/NPSurr/data/sim_cin.npz", save_path="/u/mgalexan/NPSurr/data/cin_model.pt")
+    train, val = train_surrogate(params)
+    np.savez("/u/mgalexan/NPSurr/data/trn_val_hist.npz", trn=train, val=val)
+    model = t.load("/u/mgalexan/NPSurr/data/cin_model.pt", weights_only= False)
+    data = np.load("/u/mgalexan/NPSurr/data/sim_cin.npz")
     print(data["d_val_m"][15], data["k_rel"][15])
     single_traj = {
         "r" : data["r"],
