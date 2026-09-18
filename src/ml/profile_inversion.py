@@ -80,7 +80,6 @@ class ProfileInversion:
                 x_0,
                 method="L-BFGS-B",
                 bounds=bounds,
-                options={"maxiter": 600, "ftol": 1e-20, "gtol": 1e-12},
             )
         
         A_est = float(np.exp(result.x[0]))

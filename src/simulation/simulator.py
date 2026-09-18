@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.integrate import solve_ivp
+from scipy.integrate import solve_ivp, trapezoid, cumulative_trapezoid
 
 from constants import PhysicsConstants, SimulationParameters
 
@@ -141,6 +141,86 @@ def forward_solver_free(constants: PhysicsConstants, params: SimulationParameter
         raise RuntimeError(f"Solver failed: {sol.message}")
     CF, CI = sol.y[:P["Nr"], :].T, sol.y[P["Nr"]:2*P["Nr"], :].T
     return r, t_out, CF, CI
+
+from scipy.integrate import trapezoid
+
+
+def mass_balance_residual(r, t, CN, CF, C_IN, CI, Pn, Dn, alpha, constants, params):
+    
+    P = {**vars(constants), **vars(params)}
+
+    R_T = P["R_T"]
+    k_rel = P["k_rel"]
+    k_clr = P["k_clr"]
+    k_deg = P["k_deg"]
+
+    C_total = CN + CF + C_IN + CI
+
+    M = 4.0 * np.pi * np.array([
+        trapezoid(C_total[i] * r**2, r)
+        for i in range(len(t))
+    ])
+
+    def Cp_np(t):
+        return (
+            P["C_P0"]
+            * np.exp(-np.log(2.0) / P["tau"] * t)
+            * P["alpha_0"]
+            / alpha
+        )
+
+    Cp = Cp_np(t)
+
+    J_in = Pn * (Cp - CN[:, -1])
+
+    influx_rate = 4.0 * np.pi * R_T**2 * J_in
+
+    M_in = cumulative_trapezoid(
+        influx_rate,
+        t,
+        initial=0.0,
+    )
+
+    R_total = (
+        (alpha - 1.0) * k_rel * CN
+        + (alpha - 1.0) * k_rel * C_IN
+        - k_clr * CF
+        - k_deg * C_IN
+        - k_deg * CI
+    )
+
+    reaction_rate = 4.0 * np.pi * np.array([
+        trapezoid(R_total[i] * r**2, r)
+        for i in range(len(t))
+    ])
+
+    M_rxn = cumulative_trapezoid(
+        reaction_rate,
+        t,
+        initial=0.0,
+    )
+
+
+    M_expected = M_in + M_rxn
+
+    error = M - M_expected
+
+    M_scale = np.max(np.abs(M))
+
+    if M_scale > 0:
+        relative_error = error / M_scale
+    else:
+        relative_error = np.zeros_like(error)
+
+    return {
+        "M": M,
+        "M_in": M_in,
+        "M_rxn": M_rxn,
+        "M_expected": M_expected,
+        "error": error,
+        "relative_error": relative_error,
+        "M_scale": M_scale,
+    }
 
 
 if __name__ == "__main__":
