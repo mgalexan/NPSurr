@@ -211,36 +211,23 @@ class SurrogateInversion:
         return np.log(np.mean((CI - self.obs["CI"]) ** 2))
 
     def _CI(self, x: np.ndarray): 
-        res = t.sum(self._pred(x)[:,0] * self.coord_tensor[:, 3] ** 2)
-        integral = res.detach().numpy() * self.dt * self.dr * 4 * np.pi
+        pred = self._pred(x)[:,0].detach().numpy().reshape(self.obs["CI"].shape)
+        r = self.coord_tensor[:, 3].detach().numpy().reshape(self.obs["CI"].shape)[0, :]
+        t = self.coord_tensor[:, 2].detach().numpy().reshape(self.obs["CI"].shape)[:, 0]
+        res1 = np.trapezoid(pred * r ** 2, r, axis=1)
+        res2 = np.trapezoid(res1, t)
+        integral = res2 * 4 * np.pi
         return -np.log(integral)
 
     def _CI_sim(self, x: np.ndarray):
         self.phys.d_val_m = x[0]; self.phys.k_rel = np.exp(x[1])
         P_N = P_N_from_dim(self.phys); D_N = D_N_from_dimless(self.phys); alpha = alpha_from_dim(self.phys)
-        r, _, _, _, _, CI = forward_solver(P_N, D_N, alpha, self.phys, self.params)
-        res = np.sum(CI * (r) ** 2)
-        integral = res * self.dt * self.dr * 4 * np.pi
+        r, t, _, _, _, CI = forward_solver(P_N, D_N, alpha, self.phys, self.params)
+        res1 = np.trapezoid(CI * (r) ** 2, r, axis=1)
+        res2 = np.trapezoid(res1, t)
+        integral = res2 * 4 * np.pi 
         return -np.log(integral)
-    
-    def _CI_center(self, x: np.ndarray): 
-            pred = self._pred(x)[:,0].detach().numpy()
-            rad = self.coord_tensor[:, 3].detach().numpy()
-            rad = np.where(rad < self.params.R_T * 0.5, rad, np.zeros_like(rad))   
-            integral = np.sum(pred * (rad ** 2)) * self.dt * self.dr * 4 * np.pi
-            return -np.log(integral)
-
-    def _uptake(self, x: np.ndarray):
-        res = t.sum(self._pred(x)[:,0] * self.coord_tensor[:, 3] ** 2)
-        integral_I = res.detach().numpy() * self.dt * self.dr * 4 * np.pi
-
-        tau = self.phys.tau
-        integral_P = (self.phys.C_P0 * tau / np.log(2)) * (1 - np.exp(- np.log(2) * self.params.t_f / tau))
-
-        return -np.log(integral_I / integral_P)
-        
-
-
+       
 
     def invert(self, data: dict, loss_type= "mse", timing = False):
 
@@ -251,10 +238,6 @@ class SurrogateInversion:
                     loss = self._loss_sim
         elif loss_type == "CI":
             loss = self._CI
-        elif loss_type == "CI_center":
-            loss = self._CI_center
-        elif loss_type == "clearance":
-            loss = self._clearance
         elif loss_type == "CI_sim":
             loss = self._CI_sim
 
@@ -264,7 +247,7 @@ class SurrogateInversion:
             bounds = [(self.inv.d_low, self.inv.d_high)]
 
         start_time = time.perf_counter()
-        res = differential_evolution(loss, bounds= bounds)
+        res = differential_evolution(loss, bounds= bounds, rng = 0)
         end_time = time.perf_counter()
         execution_time = end_time - start_time
         if timing:
@@ -298,23 +281,14 @@ class SurrogateInversion:
             for j, k in enumerate(k_rel_grid):
                 self.phys.d_val_m = d; self.phys.k_rel = k
                 P_N = P_N_from_dim(self.phys); D_N = D_N_from_dimless(self.phys); alpha = alpha_from_dim(self.phys)
-                r, _, _, _, _, CI = forward_solver(P_N, D_N, alpha, self.phys, self.params)
+                r, t, _, _, _, CI = forward_solver(P_N, D_N, alpha, self.phys, self.params)
                 if loss_type == "mse":
                     loss = np.mean((CI - obs["CI"]) ** 2)
                 elif loss_type == "CI": 
-                    res = np.sum(CI * (r) ** 2)
-                    integral = res * self.dt * self.dr * 4 * np.pi
+                    res1 = np.trapezoid(CI * (r) ** 2, r)
+                    res2 = np.trapezoid(res1, t)
+                    integral = res2 * 4 * np.pi
                     loss = integral
-                elif loss_type == "CI_center":
-                    rad = np.where(r < self.params.R_T * 0.5, r, np.zeros_like(r))
-                    res = np.sum(CI * (rad ** 2))
-                    integral = res * self.dt * self.dr * 4 * np.pi
-                    loss = integral
-                elif loss_type == "uptake":
-                    res = np.sum(CI * r ** 2)
-                    integral_I = res * self.dt * self.dr * 4 * np.pi
-                    integral_P = (self.phys.C_P0 * self.phys.tau / np.log(2)) * (1 - np.exp(- np.log(2) * self.params.t_f / self.phys.tau))
-                    loss = integral_I / integral_P
                 L_surf[i, j] = loss
         return L_surf
 
